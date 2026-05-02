@@ -1,15 +1,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # chameleon-ci / betterlint — Build & Publish
 #
-# lint:        hadolint-Binary direkt (kein Container nötig)
-# build-test:  Docker-in-Docker via services: — kein container: am Job
-# publish:     DinD + buildx für linux/amd64 + linux/arm64
+# Kein einziger Inline-Download. Alle Tools sind in spezialisierten,
+# versionierten Images vorinstalliert:
+#   tcwlab/hadolint:2.12.0  → Dockerfile-Linting
+#   tcwlab/buildx:0.19.3    → docker build / buildx (amd64 + arm64)
 #
-# Warum kein container: am Job? Forgejo checkout@v4 braucht Node.js im
-# Container. docker:cli hat kein Node.js → exec failed. Lösung: Steps
-# laufen auf dem Host-Runner (hat Node.js), DinD als Service daneben.
-#
-# Voraussetzung: Forgejo-Org-Secrets DOCKERHUB_USERNAME + DOCKERHUB_TOKEN
+# Checkout: Shell-basiert (git init + git fetch) — kein Node.js nötig.
+# Docker-Daemon: Direkt über tcp://docker-in-docker:2375 (runner-net).
+# Kein services:-DinD — Job-Container laufen auf runner-net des Runners.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: ci
@@ -28,7 +27,7 @@ concurrency:
 
 env:
   IMAGE: tcwlab/betterlint
-  DOCKER_CLI_URL: https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz
+  DOCKER_BUILDKIT: "1"
 
 jobs:
 
@@ -36,40 +35,47 @@ jobs:
   lint:
     name: Dockerfile Lint
     runs-on: ubuntu-22.04
+    container:
+      image: tcwlab/hadolint:2.12.0
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v4
-      - name: hadolint
+      - name: Checkout
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL \
-            https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 \
-            -o /tmp/hadolint
-          chmod +x /tmp/hadolint
-          /tmp/hadolint --ignore DL3018 Dockerfile
+          git init .
+          git remote add origin \
+            "http://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout FETCH_HEAD
+
+      - name: hadolint
+        run: hadolint --ignore DL3018 Dockerfile
 
   # ---------------------------------------------------------------------------
   build-test:
     name: Build & Smoke-Test (amd64)
     runs-on: ubuntu-22.04
-    services:
-      dind:
-        image: docker:27-dind
-        env:
-          DOCKER_TLS_CERTDIR: ""
-        options: "--privileged"
+    container:
+      image: tcwlab/buildx:0.19.3
     env:
-      DOCKER_HOST: tcp://dind:2375
+      DOCKER_HOST: tcp://docker-in-docker:2375
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v4
-      - name: Install Docker CLI
+      - name: Checkout
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL "${{ env.DOCKER_CLI_URL }}" -o /tmp/docker.tgz
-          tar xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin docker/docker
-          docker version
+          git init .
+          git remote add origin \
+            "http://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout FETCH_HEAD
+
       - name: Build (amd64)
         run: |
           docker build \
             --build-arg BETTERLINT_VERSION=dev \
             -t "${{ env.IMAGE }}:test" .
+
       - name: Smoke-Test
         run: |
           docker run --rm "${{ env.IMAGE }}:test" shellcheck --version
@@ -85,16 +91,20 @@ jobs:
     runs-on: ubuntu-22.04
     needs: [lint, build-test]
     if: startsWith(github.ref, 'refs/tags/v')
-    services:
-      dind:
-        image: docker:27-dind
-        env:
-          DOCKER_TLS_CERTDIR: ""
-        options: "--privileged"
+    container:
+      image: tcwlab/buildx:0.19.3
     env:
-      DOCKER_HOST: tcp://dind:2375
+      DOCKER_HOST: tcp://docker-in-docker:2375
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@v4
+      - name: Checkout
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin \
+            "http://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout FETCH_HEAD
 
       - name: Extract version from tag
         id: version
@@ -102,20 +112,8 @@ jobs:
           VER="${GITHUB_REF#refs/tags/v}"
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
 
-      - name: Install Docker CLI + buildx
-        run: |
-          curl -fsSL "${{ env.DOCKER_CLI_URL }}" -o /tmp/docker.tgz
-          tar xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin docker/docker
-          mkdir -p ~/.docker/cli-plugins
-          curl -fsSL https://github.com/docker/buildx/releases/download/v0.19.3/buildx-v0.19.3.linux-amd64 \
-            -o ~/.docker/cli-plugins/docker-buildx
-          chmod +x ~/.docker/cli-plugins/docker-buildx
-          docker buildx version
-
       - name: Set up QEMU (arm64 emulation)
-        run: |
-          docker run --rm --privileged \
-            multiarch/qemu-user-static --reset -p yes
+        run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
 
       - name: Set up Buildx builder
         run: |
@@ -132,6 +130,8 @@ jobs:
           VER="${{ steps.version.outputs.version }}"
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
+            --sbom=true \
+            --provenance=mode=max \
             --build-arg BETTERLINT_VERSION="${VER}" \
             -t "${{ env.IMAGE }}:latest" \
             -t "${{ env.IMAGE }}:${VER}" \
