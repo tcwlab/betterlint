@@ -15,7 +15,7 @@
 #####
 # STEP 1: base — OS-Pakete (alle Tools werden zur Laufzeit benötigt)
 #####
-FROM --platform=$BUILDPLATFORM node:22-alpine AS base
+FROM --platform=$BUILDPLATFORM dhi.io/node:22-alpine AS base
 ARG BUILDPLATFORM
 RUN apk add -U --no-cache \
       python3 \
