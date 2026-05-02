@@ -40,12 +40,12 @@ jobs:
     steps:
       - name: Checkout
         env:
-          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
         run: |
           git config --global init.defaultBranch main
           git init .
           git remote add origin \
-            "http://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
+            "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout FETCH_HEAD
 
@@ -63,12 +63,12 @@ jobs:
     steps:
       - name: Checkout
         env:
-          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
         run: |
           git config --global init.defaultBranch main
           git init .
           git remote add origin \
-            "http://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
+            "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout FETCH_HEAD
 
@@ -110,12 +110,12 @@ jobs:
     steps:
       - name: Checkout
         env:
-          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
         run: |
           git config --global init.defaultBranch main
           git init .
           git remote add origin \
-            "http://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
+            "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout FETCH_HEAD
 
