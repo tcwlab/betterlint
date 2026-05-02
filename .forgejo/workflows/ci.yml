@@ -1,0 +1,118 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# chameleon-ci / betterlint — Build & Publish
+#
+# build-test:  single-arch (amd64) Build + Smoke-Test bei jedem Push/PR.
+# publish:     multi-arch (linux/amd64, linux/arm64) via docker buildx,
+#              direkt auf Docker Hub gepusht.
+#
+# Voraussetzung: Forgejo-Secrets DOCKERHUB_USERNAME + DOCKERHUB_TOKEN setzen.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: tcwlab/betterlint
+  DEFAULT_VERSION: "1.0.0"
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Dockerfile Lint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v4
+      - name: hadolint
+        run: |
+          docker run --rm \
+            -v "$(pwd)/Dockerfile:/Dockerfile:ro" \
+            hadolint/hadolint:latest \
+            hadolint /Dockerfile
+
+  # ---------------------------------------------------------------------------
+  build-test:
+    name: Build & Smoke-Test (amd64)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v4
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF#refs/tags/v}"
+          else
+            VER="${{ env.DEFAULT_VERSION }}"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+      - name: Build (amd64)
+        run: |
+          docker build \
+            --build-arg BETTERLINT_VERSION="${{ steps.version.outputs.version }}" \
+            -t "${{ env.IMAGE }}:test" .
+      - name: Smoke-Test
+        run: |
+          docker run --rm "${{ env.IMAGE }}:test" shellcheck --version
+          docker run --rm "${{ env.IMAGE }}:test" markdownlint-cli2 --version
+          docker run --rm "${{ env.IMAGE }}:test" commitlint --version
+          docker run --rm "${{ env.IMAGE }}:test" spectral --version
+          docker run --rm "${{ env.IMAGE }}:test" \
+            python3 -c "from gherkin.parser import Parser; print('gherkin ok')"
+
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish to Docker Hub (linux/amd64 + linux/arm64)
+    runs-on: ubuntu-22.04
+    needs: [lint, build-test]
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF#refs/tags/v}"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            VER="${{ env.DEFAULT_VERSION }}"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU (arm64 emulation)
+        run: |
+          docker run --rm --privileged \
+            multiarch/qemu-user-static --reset -p yes
+
+      - name: Set up Docker Buildx
+        run: |
+          docker buildx create --name multiarch --driver docker-container --use
+          docker buildx inspect --bootstrap
+
+      - name: Docker Hub Login
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+            | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Build & Push (multi-arch)
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg BETTERLINT_VERSION="${VER}" \
+            -t "${{ env.IMAGE }}:latest" \
+            -t "${{ env.IMAGE }}:${VER}" \
+            --push \
+            .
