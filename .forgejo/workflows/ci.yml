@@ -31,12 +31,15 @@ jobs:
   lint:
     name: Dockerfile Lint
     runs-on: ubuntu-22.04
-    container:
-      image: hadolint/hadolint:latest-alpine
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v4
       - name: hadolint
-        run: hadolint Dockerfile
+        run: |
+          curl -fsSL \
+            https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 \
+            -o /tmp/hadolint
+          chmod +x /tmp/hadolint
+          /tmp/hadolint Dockerfile
 
   # ---------------------------------------------------------------------------
   build-test:
