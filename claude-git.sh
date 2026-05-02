@@ -372,23 +372,29 @@ cmd_commit() {
     local branch
     branch="$(current_branch)"
 
-    # Auto-Branching auf main/master
+    # Auto-Branching auf main/master — nur wenn bereits Commits existieren.
+    # Beim allerersten Commit (leeres Repo) direkt auf main committen,
+    # damit der default-Branch überhaupt entsteht.
     if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
-        local first_line desc slug target
-        first_line="$(printf '%s\n' "$msg" | head -n1)"
-        desc="$(extract_description "$first_line")"
-        slug="$(slug_from_description "$desc")"
-        if [ -z "$slug" ]; then
-            slug="auto-$(date +%s)"
-        fi
-        target="claude/$slug"
+        if git -C "$REPO_ROOT" rev-parse HEAD >/dev/null 2>&1; then
+            local first_line desc slug target
+            first_line="$(printf '%s\n' "$msg" | head -n1)"
+            desc="$(extract_description "$first_line")"
+            slug="$(slug_from_description "$desc")"
+            if [ -z "$slug" ]; then
+                slug="auto-$(date +%s)"
+            fi
+            target="claude/$slug"
 
-        if git -C "$REPO_ROOT" rev-parse --verify --quiet "$target" >/dev/null 2>&1; then
-            echo "↪︎  '$DISPLAY': '$branch' ist geschützt — wechsle auf bestehenden '$target'."
-            git -C "$REPO_ROOT" checkout "$target"
+            if git -C "$REPO_ROOT" rev-parse --verify --quiet "$target" >/dev/null 2>&1; then
+                echo "↪︎  '$DISPLAY': '$branch' ist geschützt — wechsle auf bestehenden '$target'."
+                git -C "$REPO_ROOT" checkout "$target"
+            else
+                echo "↪︎  '$DISPLAY': '$branch' ist geschützt — erstelle und wechsle auf '$target'."
+                git -C "$REPO_ROOT" checkout -b "$target"
+            fi
         else
-            echo "↪︎  '$DISPLAY': '$branch' ist geschützt — erstelle und wechsle auf '$target'."
-            git -C "$REPO_ROOT" checkout -b "$target"
+            echo "ℹ️  '$DISPLAY': Erster Commit — direkt auf '$branch' (kein Auto-Branching)."
         fi
     fi
 
