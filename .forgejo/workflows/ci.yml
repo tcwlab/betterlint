@@ -87,15 +87,26 @@ jobs:
           docker run --rm "${{ env.IMAGE }}:test" \
             python3 -c "from gherkin.parser import Parser; print('gherkin ok')"
 
+      - name: Docker Hub Login
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+            | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Push to staging
+        run: |
+          TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
+          docker tag "${{ env.IMAGE }}:test" "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
+          docker push "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
+
       - name: Trivy Scan
         run: |
-          docker save "${{ env.IMAGE }}:test" \
-            | docker run --rm -i tcwlab/trivy:0.70.0 image \
-                --input /dev/stdin \
-                --exit-code 0 \
-                --severity HIGH,CRITICAL \
-                --ignore-unfixed \
-                --format table
+          TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
+          docker run --rm tcwlab/trivy:0.70.0 image \
+            --exit-code 0 \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format table \
+            "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
 
   # ---------------------------------------------------------------------------
   publish:
