@@ -40,12 +40,11 @@ jobs:
     steps:
       - name: Checkout
         env:
-          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          git config --global init.defaultBranch main
           git init .
           git remote add origin \
-            "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
+            "http://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout FETCH_HEAD
 
@@ -63,14 +62,18 @@ jobs:
     steps:
       - name: Checkout
         env:
-          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          git config --global init.defaultBranch main
           git init .
           git remote add origin \
-            "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
+            "http://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout FETCH_HEAD
+
+      - name: DHI Login
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+            | docker login dhi.io --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       - name: Build (amd64)
         run: |
@@ -87,30 +90,6 @@ jobs:
           docker run --rm "${{ env.IMAGE }}:test" \
             python3 -c "from gherkin.parser import Parser; print('gherkin ok')"
 
-      - name: Docker Hub Login
-        run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
-            | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
-      - name: Push to staging
-        run: |
-          TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
-          docker tag "${{ env.IMAGE }}:test" "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
-          docker push "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
-
-      - name: Trivy Scan
-        run: |
-          TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
-          docker run --rm \
-            -e TRIVY_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}" \
-            -e TRIVY_PASSWORD="${{ secrets.DOCKERHUB_TOKEN }}" \
-            tcwlab/trivy:0.70.0 image \
-            --exit-code 0 \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --format table \
-            "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
-
   # ---------------------------------------------------------------------------
   publish:
     name: Publish to Docker Hub (linux/amd64 + linux/arm64)
@@ -124,12 +103,11 @@ jobs:
     steps:
       - name: Checkout
         env:
-          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          git config --global init.defaultBranch main
           git init .
           git remote add origin \
-            "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
+            "http://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout FETCH_HEAD
 
@@ -151,6 +129,11 @@ jobs:
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" \
             | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: DHI Login
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+            | docker login dhi.io --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       - name: Build & Push (multi-arch)
         run: |
