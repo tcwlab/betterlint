@@ -33,11 +33,11 @@ jobs:
       - uses: https://data.forgejo.org/actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.FORGEJO_TOKEN || github.token }}
+          token: ${{ secrets.FORGEJO_TOKEN }}
 
       - name: Run semantic-release
         env:
-          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
           GIT_AUTHOR_NAME: "Sascha Willomitzer"
           GIT_AUTHOR_EMAIL: "swi@thechameleonway.com"
           GIT_COMMITTER_NAME: "Sascha Willomitzer"
