@@ -9,7 +9,7 @@
 # Unterstützte Tools:
 #   hadolint      Dockerfile-Linting
 #   tflint        Terraform/OpenTofu-Dateien
-#   shellcheck    .sh-Dateien
+#   ShellCheck    .sh-Dateien
 #   markdownlint  .md-Dateien
 #   commitlint    Git-Commit-Messages (nur wenn Konfiguration vorhanden)
 #   spectral      OpenAPI / AsyncAPI (openapi*.yaml, asyncapi*.yaml)
