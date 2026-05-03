@@ -11,6 +11,8 @@
 #   commitlint      Git-Commit-Messages
 #   spectral        OpenAPI / AsyncAPI
 #   gherkin         Feature-Dateien
+#   jq              JSON-Processor (Validierung + Filter)
+#   yq              YAML-Processor (Validierung + Filter)
 #
 # Wrapper: /usr/local/bin/betterlint  (auto-detect, --skip/--only, --markdown)
 #
@@ -36,7 +38,9 @@ RUN apk add -U --no-cache \
       unzip \
       git \
       bash \
-      ca-certificates && \
+      ca-certificates \
+      jq \
+      yq && \
     apk upgrade && \
     rm -rf /var/cache/apk/*
 
@@ -49,7 +53,7 @@ ARG HADOLINT_VERSION=2.14.0
 ARG TFLINT_VERSION=0.62.0
 
 LABEL org.opencontainers.image.title="betterlint" \
-      org.opencontainers.image.description="All-in-one linter: hadolint, tflint, shellcheck, markdownlint, commitlint, spectral, gherkin" \
+      org.opencontainers.image.description="All-in-one linter: hadolint, tflint, shellcheck, markdownlint, commitlint, spectral, gherkin, jq, yq" \
       org.opencontainers.image.vendor="The Chameleon Way" \
       org.opencontainers.image.url="https://hub.docker.com/r/tcwlab/betterlint" \
       org.opencontainers.image.source="https://git.mon.k8b.co/chameleon-ci/betterlint" \
@@ -107,6 +111,8 @@ RUN hadolint --version \
   && commitlint --version \
   && spectral --version \
   && python3 -c "from gherkin.parser import Parser; print('gherkin ok')" \
+  && jq --version \
+  && yq --version \
   && betterlint --version
 
 USER linter

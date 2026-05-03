@@ -15,6 +15,8 @@ Dateitypen vorhanden sind, und führt nur die passenden Linter aus.
 | `@commitlint/cli` | 20.x | Conventional-Commits-Prüfung |
 | `@stoplight/spectral-cli` | 6.15.1 | OpenAPI/AsyncAPI-Linting |
 | `gherkin-official` | 39.0.0 | Gherkin-Syntax-Validierung |
+| `jq` | via apk | JSON-Processor (Validierung + Filter) |
+| `yq` | via apk | YAML-Processor (Validierung + Filter) |
 
 ## Nutzung in Forgejo Actions
 
