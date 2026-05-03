@@ -250,12 +250,18 @@ jobs:
 
       - name: Run betterlint
         run: |
+<<<<<<< Updated upstream
           # set +e: verhindert, dass bash bei betterlint-Exit-1 sofort abbricht,
           # bevor PIPESTATUS gelesen werden kann.
           set +e
           echo "workdir: $(pwd)"
           echo "linting: ${BETTERLINT_DIR:-.}"
           betterlint --dir . --markdown 2>&1 | tee /tmp/betterlint-report.md
+=======
+          set +e
+          bash -x /usr/local/bin/betterlint --dir . --markdown 2>&1 \
+            | tee /tmp/betterlint-report.md
+>>>>>>> Stashed changes
           LINT_EXIT="${PIPESTATUS[0]}"
           echo "betterlint exit: ${LINT_EXIT}"
           exit "${LINT_EXIT}"
