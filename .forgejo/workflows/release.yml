@@ -52,6 +52,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
           GITEA_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITEA_URL: "https://git.mon.k8b.co"
           GIT_AUTHOR_NAME: "Sascha Willomitzer"
           GIT_AUTHOR_EMAIL: "swi@thechameleonway.com"
           GIT_COMMITTER_NAME: "Sascha Willomitzer"
