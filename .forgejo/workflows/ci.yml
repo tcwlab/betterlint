@@ -350,8 +350,16 @@ jobs:
               page += 1
 
           if existing_id:
-              status = patch(f"{api}/repos/{repo}/issues/comments/{existing_id}", {"body": comment})
-              print(f"PR #{pr_number}: Betterlint-Kommentar aktualisiert (HTTP {status})")
+              try:
+                  status = patch(f"{api}/repos/{repo}/issues/comments/{existing_id}", {"body": comment})
+                  print(f"PR #{pr_number}: Betterlint-Kommentar aktualisiert (HTTP {status})")
+              except urllib.error.HTTPError as e:
+                  if e.code >= 500:
+                      print(f"PATCH fehlgeschlagen ({e.code}) — erstelle neuen Kommentar")
+                      status = post(f"{api}/repos/{repo}/issues/{pr_number}/comments", {"body": comment})
+                      print(f"PR #{pr_number}: Betterlint-Kommentar erstellt (HTTP {status})")
+                  else:
+                      raise
           else:
               status = post(f"{api}/repos/{repo}/issues/{pr_number}/comments", {"body": comment})
               print(f"PR #{pr_number}: Betterlint-Kommentar erstellt (HTTP {status})")
