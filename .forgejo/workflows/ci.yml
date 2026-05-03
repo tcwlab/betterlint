@@ -124,7 +124,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
           REPO: ${{ github.repository }}
-          IMAGE_REF: "tcwlab/forgejo-build:betterlint-${{ github.sha }}"
+          SCANNED_IMAGE: "tcwlab/forgejo-build:betterlint-${{ github.sha }}"
+          TRIVY_IMAGE: "tcwlab/trivy:0.70.0"
         run: |
           python3 << 'EOF'
           import os, json, re, urllib.request, urllib.error
@@ -206,7 +207,12 @@ jobs:
                   body += f"| {ico} | `{pkg}` | {inst} | {fixed} | {cve_link} |\n"
 
           scan_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-          comment   = f"{MARKER}\n{body}\n\n_Scan: `{os.environ['IMAGE_REF']}` — {scan_date}_"
+          comment   = (
+              f"{MARKER}\n{body}\n\n"
+              f"_Gescannt: `{os.environ['SCANNED_IMAGE']}` "
+              f"· Tool: `{os.environ['TRIVY_IMAGE']}` "
+              f"· {scan_date}_"
+          )
 
           # Vorhandenen Kommentar suchen (seitenweise, max 200)
           existing_id = None
