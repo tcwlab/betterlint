@@ -27,6 +27,7 @@
 #####
 FROM --platform=$BUILDPLATFORM node:24-alpine AS base
 ARG BUILDPLATFORM
+# hadolint ignore=DL3018
 RUN apk add -U --no-cache \
       python3 \
       py3-pip \

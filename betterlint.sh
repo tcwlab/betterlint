@@ -9,7 +9,7 @@
 # Unterstützte Tools:
 #   hadolint      Dockerfile-Linting
 #   tflint        Terraform/OpenTofu-Dateien
-#   shellcheck    .sh-Dateien
+#   ShellCheck    .sh-Dateien
 #   markdownlint  .md-Dateien
 #   commitlint    Git-Commit-Messages (nur wenn Konfiguration vorhanden)
 #   spectral      OpenAPI / AsyncAPI (openapi*.yaml, asyncapi*.yaml)
@@ -99,14 +99,15 @@ is_enabled() {
 }
 
 declare -A STATUS=()   # ok | fail | skip
-declare -A DETAIL=()   # Fehlerdetails (max 300 Zeichen)
+declare -A DETAIL=()   # Fehlerdetails (max 400 Zeichen)
 OVERALL_FAIL=false
 
 set_result() {
     local name="$1" status="$2" detail="${3:-}"
     STATUS[$name]="$status"
     DETAIL[$name]="${detail:0:400}"
-    [[ "$status" == "fail" ]] && OVERALL_FAIL=true
+    # if/fi statt &&: verhindert, dass set -e greift wenn status != "fail"
+    if [[ "$status" == "fail" ]]; then OVERALL_FAIL=true; fi
 }
 
 # ── Verzeichnis wechseln ─────────────────────────────────────────────────────
@@ -119,18 +120,25 @@ if is_enabled hadolint; then
     if [[ ${#DOCKER_FILES[@]} -eq 0 ]]; then
         set_result hadolint skip "keine Dockerfiles gefunden"
     else
+        # Config-Datei explizit übergeben falls vorhanden (hadolint findet sie
+        # je nach Version nicht immer automatisch aus dem CWD)
+        hadolint_cfg=()
+        for _cfg in ".hadolint.yaml" ".hadolint.yml"; do
+            if [[ -f "$_cfg" ]]; then hadolint_cfg=(--config "$_cfg"); break; fi
+        done
         out=""; ok=true
         for f in "${DOCKER_FILES[@]}"; do
-            r=$(hadolint "$f" 2>&1) || { out+="$f: $r"$'\n'; ok=false; }
+            r=$(hadolint "${hadolint_cfg[@]}" "$f" 2>&1) \
+                || { out+="$f: $r"$'\n'; ok=false; }
         done
-        $ok && set_result hadolint ok || set_result hadolint fail "$out"
+        if $ok; then set_result hadolint ok; else set_result hadolint fail "$out"; fi
     fi
 fi
 
 # ── tflint ───────────────────────────────────────────────────────────────────
 if is_enabled tflint; then
-    mapfile -t TF_DIRS < <(find . -name "*.tf" ! -path "./.git/*" 2>/dev/null \
-        | xargs -r -I{} dirname {} | sort -u || true)
+    mapfile -t TF_DIRS < <(find . -name "*.tf" ! -path "./.git/*" \
+        -exec dirname {} \; 2>/dev/null | sort -u || true)
     if [[ ${#TF_DIRS[@]} -eq 0 ]]; then
         set_result tflint skip "keine .tf-Dateien gefunden"
     else
@@ -138,7 +146,7 @@ if is_enabled tflint; then
         for d in "${TF_DIRS[@]}"; do
             r=$(tflint --chdir "$d" 2>&1) || { out+="$d: $r"$'\n'; ok=false; }
         done
-        $ok && set_result tflint ok || set_result tflint fail "$out"
+        if $ok; then set_result tflint ok; else set_result tflint fail "$out"; fi
     fi
 fi
 
@@ -152,7 +160,7 @@ if is_enabled shellcheck; then
         for f in "${SH_FILES[@]}"; do
             r=$(shellcheck "$f" 2>&1) || { out+="$r"$'\n'; ok=false; }
         done
-        $ok && set_result shellcheck ok || set_result shellcheck fail "$out"
+        if $ok; then set_result shellcheck ok; else set_result shellcheck fail "$out"; fi
     fi
 fi
 
@@ -162,9 +170,11 @@ if is_enabled markdownlint; then
     if [[ ${#MD_FILES[@]} -eq 0 ]]; then
         set_result markdownlint skip "keine .md-Dateien gefunden"
     else
-        out=$(markdownlint-cli2 "**/*.md" "#node_modules" "#.git" 2>&1) \
-            && set_result markdownlint ok \
-            || set_result markdownlint fail "$out"
+        if out=$(markdownlint-cli2 "**/*.md" "#node_modules" "#.git" 2>&1); then
+            set_result markdownlint ok
+        else
+            set_result markdownlint fail "$out"
+        fi
     fi
 fi
 
@@ -179,9 +189,11 @@ if is_enabled commitlint; then
     elif ! command -v git &>/dev/null || ! git rev-parse HEAD &>/dev/null 2>&1; then
         set_result commitlint skip "kein Git-Repository"
     else
-        out=$(git log -1 --pretty=%B 2>&1 | commitlint 2>&1) \
-            && set_result commitlint ok \
-            || set_result commitlint fail "$out"
+        if out=$(git log -1 --pretty=%B 2>&1 | commitlint 2>&1); then
+            set_result commitlint ok
+        else
+            set_result commitlint fail "$out"
+        fi
     fi
 fi
 
@@ -198,7 +210,7 @@ if is_enabled spectral; then
         for f in "${API_FILES[@]}"; do
             r=$(spectral lint "$f" 2>&1) || { out+="$f: $r"$'\n'; ok=false; }
         done
-        $ok && set_result spectral ok || set_result spectral fail "$out"
+        if $ok; then set_result spectral ok; else set_result spectral fail "$out"; fi
     fi
 fi
 
@@ -226,7 +238,7 @@ except Exception as e:
 PYEOF
             ) || { out+="${f}: $r"$'\n'; ok=false; }
         done
-        $ok && set_result gherkin ok || set_result gherkin fail "$out"
+        if $ok; then set_result gherkin ok; else set_result gherkin fail "$out"; fi
     fi
 fi
 
@@ -249,6 +261,8 @@ if [[ "$OUTPUT_MODE" == "markdown" ]]; then
         d="${d//|/,}"
         d="${d//$'\n'/ }"
         d="${d//\`/\'}"
+        # ANSI-Codes entfernen
+        d=$(printf '%s' "$d" | sed 's/\x1b\[[0-9;]*m//g')
         case "$s" in
             ok)   echo "| \`$t\` | ✅ | |" ;;
             fail) echo "| \`$t\` | ❌ | \`${d:0:200}\` |" ;;
@@ -275,4 +289,4 @@ else
     echo ""
 fi
 
-$OVERALL_FAIL && exit 1 || exit 0
+if $OVERALL_FAIL; then exit 1; else exit 0; fi

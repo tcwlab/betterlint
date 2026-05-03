@@ -1,61 +1,66 @@
 # tcwlab/betterlint
 
-Kompaktes Multi-Linter-Image für CI-Pipelines. Enthält alle Linter, die TCW-Projekte brauchen — ohne die Schwergewichtigkeit von MegaLinter.
+Kompaktes Multi-Linter-Image für CI-Pipelines. Enthält alle Linter, die TCW-Projekte brauchen —
+ohne die Schwergewichtigkeit von MegaLinter. Der `betterlint`-Wrapper erkennt automatisch, welche
+Dateitypen vorhanden sind, und führt nur die passenden Linter aus.
 
 ## Enthaltene Tools
 
 | Tool | Version | Zweck |
-|------|---------|-------|
+| --- | --- | --- |
+| `hadolint` | 2.14.0 | Dockerfile-Linting |
+| `tflint` | 0.62.0 | Terraform/OpenTofu-Linting |
 | `shellcheck` | via apk | Shell-Script-Linting |
-| `markdownlint-cli2` | 0.17.2 | Markdown-Linting |
-| `@commitlint/cli` | 19.x | Conventional-Commits-Prüfung |
-| `@commitlint/config-conventional` | 19.x | Commitlint-Config |
-| `@stoplight/spectral-cli` | 6.x | OpenAPI-Linting |
-| `gherkin-official` | 24–28 | Gherkin-Syntax-Validierung |
+| `markdownlint-cli2` | 0.22.1 | Markdown-Linting |
+| `@commitlint/cli` | 20.x | Conventional-Commits-Prüfung |
+| `@stoplight/spectral-cli` | 6.15.1 | OpenAPI/AsyncAPI-Linting |
+| `gherkin-official` | 39.0.0 | Gherkin-Syntax-Validierung |
 
 ## Nutzung in Forgejo Actions
 
 ```yaml
 jobs:
-  lint:
+  betterlint-check:
     runs-on: ubuntu-22.04
     container:
-      image: tcwlab/betterlint:1.0.0
+      image: tcwlab/betterlint:latest
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v4
 
-      - name: ShellCheck
+      - name: Run betterlint
         run: |
-          find . -name '*.sh' -not -path './.git/*' \
-            | xargs --no-run-if-empty shellcheck --severity=warning
+          set +e
+          betterlint --dir . --markdown 2>&1 | tee /tmp/betterlint-report.md
+          LINT_EXIT="${PIPESTATUS[0]}"
+          exit "${LINT_EXIT}"
+```
 
-      - name: Markdown
-        run: markdownlint-cli2 --config .markdownlint.json "**/*.md" "#node_modules"
+### Optionen
 
-      - name: Conventional Commits
-        run: |
-          npx commitlint --config .commitlintrc.json \
-            --from "${{ github.event.pull_request.base.sha }}" --to HEAD
+| Flag | Beschreibung |
+| --- | --- |
+| `--skip TOOL,...` | Tools überspringen (Kommaliste) |
+| `--only TOOL,...` | Nur diese Tools ausführen |
+| `--dir PATH` | Ziel-Verzeichnis (Standard: `/workspace`) |
+| `--markdown` | Ausgabe als Markdown-Tabelle |
+| `--version` | Version ausgeben |
 
-      - name: OpenAPI
-        run: spectral lint --ruleset .spectral.yaml docs/api/openapi.yaml
+Alternativ über Umgebungsvariablen:
 
-      - name: Gherkin
-        run: |
-          python3 - <<'PY'
-          # ... (Gherkin-Parse-Skript)
-          PY
+```bash
+BETTERLINT_SKIP=commitlint,spectral betterlint --dir .
+BETTERLINT_ONLY=hadolint,tflint    betterlint --dir .
 ```
 
 ## Versionierung
 
 - Docker Hub: [tcwlab/betterlint](https://hub.docker.com/r/tcwlab/betterlint)
-- Tags: `latest` + `x.y.z` (SemVer, eigene Versionsnummer da Multi-Tool-Image)
+- Tags: `latest` + `x.y.z` (SemVer, automatisch per Semantic Release)
 
 ## Lokaler Build
 
 ```bash
-docker build --build-arg BETTERLINT_VERSION=1.0.0 -t tcwlab/betterlint:1.0.0 .
+docker build --build-arg BETTERLINT_VERSION=dev -t tcwlab/betterlint:dev .
 ```
 
 ## Lizenz
