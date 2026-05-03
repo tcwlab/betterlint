@@ -250,10 +250,15 @@ jobs:
 
       - name: Run betterlint
         run: |
-          # tee: Ausgabe erscheint im CI-Log UND landet in der Report-Datei.
-          # PIPESTATUS[0]: Exit-Code von betterlint, nicht von tee.
-          betterlint --markdown 2>&1 | tee /tmp/betterlint-report.md
-          exit "${PIPESTATUS[0]}"
+          # set +e: verhindert, dass bash bei betterlint-Exit-1 sofort abbricht,
+          # bevor PIPESTATUS gelesen werden kann.
+          set +e
+          echo "workdir: $(pwd)"
+          echo "linting: ${BETTERLINT_DIR:-.}"
+          betterlint --dir . --markdown 2>&1 | tee /tmp/betterlint-report.md
+          LINT_EXIT="${PIPESTATUS[0]}"
+          echo "betterlint exit: ${LINT_EXIT}"
+          exit "${LINT_EXIT}"
 
       - name: PR-Beschreibung mit Betterlint-Ergebnis aktualisieren
         if: always()
