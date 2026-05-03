@@ -7,6 +7,8 @@
 # variablen gezielt ein- und ausgeschaltet werden.
 #
 # Unterstützte Tools:
+#   hadolint      Dockerfile-Linting
+#   tflint        Terraform/OpenTofu-Dateien
 #   shellcheck    .sh-Dateien
 #   markdownlint  .md-Dateien
 #   commitlint    Git-Commit-Messages (nur wenn Konfiguration vorhanden)
@@ -58,6 +60,8 @@ Optionen:
   --help            Diese Hilfe
 
 Verfügbare Tools:
+  hadolint      Dockerfiles (Dockerfile*)
+  tflint        Terraform/OpenTofu-Dateien (.tf)
   shellcheck    Shell-Skripte (.sh)
   markdownlint  Markdown-Dateien (.md)
   commitlint    Git-Commit-Messages (braucht Konfigurationsdatei)
@@ -67,6 +71,7 @@ Verfügbare Tools:
 Beispiele:
   betterlint
   betterlint --skip commitlint,spectral
+  betterlint --only hadolint,tflint
   betterlint --only shellcheck,markdownlint
   betterlint --markdown > /tmp/lint-report.md
 HELP
@@ -106,6 +111,36 @@ set_result() {
 
 # ── Verzeichnis wechseln ─────────────────────────────────────────────────────
 cd "$DIR"
+
+# ── hadolint ─────────────────────────────────────────────────────────────────
+if is_enabled hadolint; then
+    mapfile -t DOCKER_FILES < <(find . \( -name "Dockerfile" -o -name "Dockerfile.*" \) \
+        ! -path "./.git/*" 2>/dev/null || true)
+    if [[ ${#DOCKER_FILES[@]} -eq 0 ]]; then
+        set_result hadolint skip "keine Dockerfiles gefunden"
+    else
+        out=""; ok=true
+        for f in "${DOCKER_FILES[@]}"; do
+            r=$(hadolint "$f" 2>&1) || { out+="$f: $r"$'\n'; ok=false; }
+        done
+        $ok && set_result hadolint ok || set_result hadolint fail "$out"
+    fi
+fi
+
+# ── tflint ───────────────────────────────────────────────────────────────────
+if is_enabled tflint; then
+    mapfile -t TF_DIRS < <(find . -name "*.tf" ! -path "./.git/*" 2>/dev/null \
+        | xargs -r -I{} dirname {} | sort -u || true)
+    if [[ ${#TF_DIRS[@]} -eq 0 ]]; then
+        set_result tflint skip "keine .tf-Dateien gefunden"
+    else
+        out=""; ok=true
+        for d in "${TF_DIRS[@]}"; do
+            r=$(tflint --chdir "$d" 2>&1) || { out+="$d: $r"$'\n'; ok=false; }
+        done
+        $ok && set_result tflint ok || set_result tflint fail "$out"
+    fi
+fi
 
 # ── shellcheck ───────────────────────────────────────────────────────────────
 if is_enabled shellcheck; then
@@ -196,7 +231,7 @@ PYEOF
 fi
 
 # ── Ausgabe ───────────────────────────────────────────────────────────────────
-TOOLS=(shellcheck markdownlint commitlint spectral gherkin)
+TOOLS=(hadolint tflint shellcheck markdownlint commitlint spectral gherkin)
 
 if [[ "$OUTPUT_MODE" == "markdown" ]]; then
     if $OVERALL_FAIL; then

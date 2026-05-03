@@ -2,7 +2,7 @@
 # chameleon-ci / betterlint — Build & Publish
 #
 # CI-Images:
-#   tcwlab/hadolint:2.12.0  → Dockerfile-Linting
+#   tcwlab/betterlint:latest → Dockerfile-Linting
 #   tcwlab/buildx:0.33.0    → docker build / buildx (amd64 + arm64)
 #   tcwlab/trivy:0.70.0     → Security Scan
 #   tcwlab/forgejo-build:betterlint-<sha>  → betterlint Self-Check
@@ -11,6 +11,10 @@
 # Docker-Daemon: tcp://docker-in-docker:2375 (runner-net).
 #
 # Versionierung: Semantic Release (v*.*.*) via release.yml
+#   → tcwlab/betterlint:<semver>          immutable  (z.B. 1.2.47)
+#   → tcwlab/betterlint:<major>.<minor>   float      (z.B. 1.2)
+#   → tcwlab/betterlint:<major>           float      (z.B. 1)
+#   → tcwlab/betterlint:latest            float
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: ci
@@ -38,7 +42,7 @@ jobs:
     name: Dockerfile Lint
     runs-on: ubuntu-22.04
     container:
-      image: tcwlab/hadolint:2.12.0
+      image: tcwlab/betterlint:latest
     steps:
       - name: Checkout
         env:
@@ -52,7 +56,7 @@ jobs:
           git checkout FETCH_HEAD
 
       - name: hadolint
-        run: hadolint --ignore DL3018 Dockerfile
+        run: betterlint --only hadolint
 
   # ---------------------------------------------------------------------------
   build-test:
@@ -376,7 +380,11 @@ jobs:
         id: version
         run: |
           VER="${GITHUB_REF#refs/tags/v}"
-          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          MAJOR="${VER%%.*}"
+          MINOR="${VER%.*}"
+          echo "version=${VER}"   >> "$GITHUB_OUTPUT"
+          echo "major=${MAJOR}"   >> "$GITHUB_OUTPUT"
+          echo "minor=${MINOR}"   >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU (arm64 emulation)
         run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
@@ -394,12 +402,16 @@ jobs:
       - name: Build & Push (multi-arch)
         run: |
           VER="${{ steps.version.outputs.version }}"
+          MAJOR="${{ steps.version.outputs.major }}"
+          MINOR="${{ steps.version.outputs.minor }}"
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --sbom=true \
             --provenance=mode=max \
             --build-arg BETTERLINT_VERSION="${VER}" \
             -t "${{ env.IMAGE }}:${VER}" \
+            -t "${{ env.IMAGE }}:${MINOR}" \
+            -t "${{ env.IMAGE }}:${MAJOR}" \
             -t "${{ env.IMAGE }}:latest" \
             --push \
             .
