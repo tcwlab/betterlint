@@ -1,21 +1,27 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # chameleon-ci / betterlint — Build & Publish
 #
-# Kein einziger Inline-Download. Alle Tools sind in spezialisierten,
-# versionierten Images vorinstalliert:
-#   tcwlab/hadolint:2.12.0  → Dockerfile-Linting
+# CI-Images:
+#   tcwlab/betterlint:latest → Dockerfile-Linting
 #   tcwlab/buildx:0.33.0    → docker build / buildx (amd64 + arm64)
+#   tcwlab/trivy:0.70.0     → Security Scan
+#   tcwlab/forgejo-build:betterlint-<sha>  → betterlint Self-Check
 #
 # Checkout: Shell-basiert (git init + git fetch) — kein Node.js nötig.
-# Docker-Daemon: Direkt über tcp://docker-in-docker:2375 (runner-net).
-# Kein services:-DinD — Job-Container laufen auf runner-net des Runners.
+# Docker-Daemon: tcp://docker-in-docker:2375 (runner-net).
+#
+# Versionierung: Semantic Release (v*.*.*) via release.yml
+#   → tcwlab/betterlint:<semver>          immutable  (z.B. 1.2.47)
+#   → tcwlab/betterlint:<major>.<minor>   float      (z.B. 1.2)
+#   → tcwlab/betterlint:<major>           float      (z.B. 1)
+#   → tcwlab/betterlint:latest            float
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: ci
 
 on:
   push:
-    branches: [main, "claude/*"]
+    branches: [main, "feature/*", "claude/*"]
     tags: ["v*.*.*"]
   pull_request:
     branches: [main]
@@ -36,7 +42,7 @@ jobs:
     name: Dockerfile Lint
     runs-on: ubuntu-22.04
     container:
-      image: tcwlab/hadolint:2.12.0
+      image: tcwlab/betterlint:latest
     steps:
       - name: Checkout
         env:
@@ -50,7 +56,7 @@ jobs:
           git checkout FETCH_HEAD
 
       - name: hadolint
-        run: hadolint --ignore DL3018 Dockerfile
+        run: betterlint --only hadolint
 
   # ---------------------------------------------------------------------------
   build-test:
@@ -80,6 +86,7 @@ jobs:
 
       - name: Smoke-Test
         run: |
+          docker run --rm "${{ env.IMAGE }}:test" betterlint --version
           docker run --rm "${{ env.IMAGE }}:test" shellcheck --version
           docker run --rm "${{ env.IMAGE }}:test" markdownlint-cli2 --version
           docker run --rm "${{ env.IMAGE }}:test" commitlint --version
@@ -92,30 +99,266 @@ jobs:
           echo "${{ secrets.DOCKERHUB_TOKEN }}" \
             | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-      - name: Push to staging
+      - name: Push zu Staging
         run: |
           TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
           docker tag "${{ env.IMAGE }}:test" "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
           docker push "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
 
-      - name: Trivy Scan
+  # ---------------------------------------------------------------------------
+  security:
+    name: Trivy Security Scan
+    # ubuntu-22.04 direkt (kein Container) — Python3 ist auf dem Runner vorhanden.
+    # Docker CLI wird manuell installiert; kein tcwlab/buildx-Container hier.
+    runs-on: ubuntu-22.04
+    needs: [build-test]
+    env:
+      DOCKER_HOST: tcp://docker-in-docker:2375
+    steps:
+      - name: Install Docker CLI
+        run: |
+          curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-29.4.2.tgz" \
+            -o /tmp/docker.tgz
+          tar xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin docker/docker
+
+      - name: Trivy Scan (JSON)
         run: |
           TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
           docker run --rm \
             -e TRIVY_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}" \
             -e TRIVY_PASSWORD="${{ secrets.DOCKERHUB_TOKEN }}" \
             tcwlab/trivy:0.70.0 image \
-            --exit-code 0 \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --format table \
-            "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
+            --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed \
+            --format json \
+            "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}" \
+            > /tmp/trivy-report.json
+
+      - name: PR-Beschreibung mit Trivy-Ergebnis aktualisieren
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          REPO: ${{ github.repository }}
+          IMAGE_REF: "tcwlab/forgejo-build:betterlint-${{ github.sha }}"
+        run: |
+          python3 << 'EOF'
+          import os, json, re, urllib.request, urllib.error
+          from datetime import datetime, timezone
+
+          token    = os.environ["FORGEJO_TOKEN"]
+          repo     = os.environ["REPO"]
+          event    = os.environ["GITHUB_EVENT_NAME"]
+          base_url = "https://git.mon.k8b.co/api/v1"
+          headers  = {"Authorization": f"token {token}", "Content-Type": "application/json"}
+
+          def api_get(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read())
+
+          def api_patch(url, body):
+              req = urllib.request.Request(
+                  url, data=json.dumps(body).encode(), headers=headers, method="PATCH"
+              )
+              with urllib.request.urlopen(req) as r:
+                  return r.status
+
+          pr_number = None
+          if event == "pull_request":
+              pr_number = os.environ["PR_NUMBER"]
+          else:
+              branch = os.environ["HEAD_BRANCH"]
+              try:
+                  pulls = api_get(f"{base_url}/repos/{repo}/pulls?state=open&limit=50")
+                  for pr in pulls:
+                      if pr.get("head", {}).get("ref") == branch:
+                          pr_number = str(pr["number"])
+                          break
+              except urllib.error.URLError as e:
+                  print(f"PR-Suche fehlgeschlagen: {e}")
+
+          if not pr_number:
+              print("Kein offener PR gefunden — PR-Beschreibung wird nicht aktualisiert")
+              exit(0)
+
+          with open("/tmp/trivy-report.json") as f:
+              report = json.load(f)
+
+          severity_icon = {"CRITICAL": "\U0001f534", "HIGH": "\U0001f7e0"}
+          rows = []
+          for result in report.get("Results", []):
+              for vuln in result.get("Vulnerabilities") or []:
+                  sev   = vuln.get("Severity", "")
+                  pkg   = vuln.get("PkgName", "")
+                  inst  = vuln.get("InstalledVersion", "")
+                  fixed = vuln.get("FixedVersion", "") or "—"
+                  cve   = vuln.get("VulnerabilityID", "")
+                  url   = next(
+                      (r for r in vuln.get("References", []) if "nvd.nist.gov" in r),
+                      vuln.get("PrimaryURL", "")
+                  )
+                  cve_link = f"[{cve}]({url})" if url else cve
+                  rows.append((sev, severity_icon.get(sev, "⚪"), pkg, inst, fixed, cve_link))
+
+          order = {"CRITICAL": 0, "HIGH": 1}
+          rows.sort(key=lambda r: (order.get(r[0], 9), r[2]))
+          counts = {s: sum(1 for r in rows if r[0] == s) for s in ["CRITICAL", "HIGH"]}
+          total  = sum(counts.values())
+
+          if total == 0:
+              summary = "**✅ Keine HIGH/CRITICAL Schwachstellen gefunden**"
+              table   = ""
+          else:
+              parts   = [f"{counts[s]} {s}" for s in ["CRITICAL", "HIGH"] if counts[s]]
+              summary = f"**⚠️ Security Scan — {', '.join(parts)}** (nur behebbare Schwachstellen)"
+              table   = (
+                  "\n| Severity | Package | Installed | Fixed | CVE |\n"
+                  "|---|---|---|---|---|\n"
+              )
+              for _, icon, pkg, inst, fixed, cve_link in rows:
+                  table += f"| {icon} | `{pkg}` | {inst} | {fixed} | {cve_link} |\n"
+
+          scan_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+          footer    = f"\n_Scan: `{os.environ['IMAGE_REF']}` — {scan_date}_"
+
+          start = "<!-- trivy-scan-chameleon-ci-start -->"
+          end   = "<!-- trivy-scan-chameleon-ci-end -->"
+          block = f"{start}\n{summary}{table}{footer}\n{end}"
+
+          pr_data      = api_get(f"{base_url}/repos/{repo}/pulls/{pr_number}")
+          current_body = pr_data.get("body", "") or ""
+
+          if start in current_body:
+              new_body = re.sub(
+                  re.escape(start) + r".*?" + re.escape(end),
+                  block, current_body, flags=re.DOTALL
+              )
+          else:
+              new_body = block + ("\n\n" + current_body if current_body else "")
+
+          status = api_patch(f"{base_url}/repos/{repo}/pulls/{pr_number}", {"body": new_body})
+          print(f"PR #{pr_number}: Trivy-Block aktualisiert ({total} Findings, HTTP {status})")
+          EOF
+
+  # ---------------------------------------------------------------------------
+  betterlint-check:
+    name: Betterlint Self-Check
+    runs-on: ubuntu-22.04
+    needs: [build-test]
+    # Das Staging-Image wird direkt als Job-Container verwendet.
+    # --user root: Checkout und git-Befehle benötigen Schreibrechte.
+    container:
+      image: "tcwlab/forgejo-build:betterlint-${{ github.sha }}"
+      credentials:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      options: "--user root"
+    steps:
+      - name: Checkout
+        env:
+          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          git config --global init.defaultBranch main
+          git config --global --add safe.directory "$(pwd)"
+          git init .
+          git remote add origin \
+            "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout FETCH_HEAD
+
+      - name: Run betterlint
+        run: |
+          betterlint --markdown > /tmp/betterlint-report.md
+          LINT_EXIT=$?
+          cat /tmp/betterlint-report.md
+          exit $LINT_EXIT
+
+      - name: PR-Beschreibung mit Betterlint-Ergebnis aktualisieren
+        if: always()
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          REPO: ${{ github.repository }}
+          IMAGE_REF: "tcwlab/forgejo-build:betterlint-${{ github.sha }}"
+        run: |
+          python3 << 'EOF'
+          import os, re, urllib.request, urllib.error
+          from datetime import datetime, timezone
+
+          token    = os.environ["FORGEJO_TOKEN"]
+          repo     = os.environ["REPO"]
+          event    = os.environ["GITHUB_EVENT_NAME"]
+          base_url = "https://git.mon.k8b.co/api/v1"
+          headers  = {"Authorization": f"token {token}", "Content-Type": "application/json"}
+
+          def api_get(url):
+              import json
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read())
+
+          def api_patch(url, body):
+              import json
+              req = urllib.request.Request(
+                  url, data=json.dumps(body).encode(), headers=headers, method="PATCH"
+              )
+              with urllib.request.urlopen(req) as r:
+                  return r.status
+
+          pr_number = None
+          if event == "pull_request":
+              pr_number = os.environ["PR_NUMBER"]
+          else:
+              branch = os.environ["HEAD_BRANCH"]
+              try:
+                  pulls = api_get(f"{base_url}/repos/{repo}/pulls?state=open&limit=50")
+                  for pr in pulls:
+                      if pr.get("head", {}).get("ref") == branch:
+                          pr_number = str(pr["number"])
+                          break
+              except urllib.error.URLError as e:
+                  print(f"PR-Suche fehlgeschlagen: {e}")
+
+          if not pr_number:
+              print("Kein offener PR gefunden — PR-Beschreibung wird nicht aktualisiert")
+              exit(0)
+
+          try:
+              with open("/tmp/betterlint-report.md") as f:
+                  report_content = f.read().strip()
+          except FileNotFoundError:
+              report_content = "**⚠️ betterlint-Report nicht gefunden**"
+
+          scan_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+          footer    = f"\n_Scan: `{os.environ['IMAGE_REF']}` — {scan_date}_"
+
+          start = "<!-- betterlint-ci-start -->"
+          end   = "<!-- betterlint-ci-end -->"
+          block = f"{start}\n{report_content}{footer}\n{end}"
+
+          pr_data      = api_get(f"{base_url}/repos/{repo}/pulls/{pr_number}")
+          current_body = pr_data.get("body", "") or ""
+
+          if start in current_body:
+              new_body = re.sub(
+                  re.escape(start) + r".*?" + re.escape(end),
+                  block, current_body, flags=re.DOTALL
+              )
+          else:
+              new_body = block + ("\n\n" + current_body if current_body else "")
+
+          status = api_patch(f"{base_url}/repos/{repo}/pulls/{pr_number}", {"body": new_body})
+          print(f"PR #{pr_number}: Betterlint-Block aktualisiert (HTTP {status})")
+          EOF
 
   # ---------------------------------------------------------------------------
   publish:
     name: Publish to Docker Hub (linux/amd64 + linux/arm64)
     runs-on: ubuntu-22.04
-    needs: [lint, build-test]
+    needs: [lint, build-test, security, betterlint-check]
     if: startsWith(github.ref, 'refs/tags/v')
     container:
       image: tcwlab/buildx:0.33.0
@@ -137,7 +380,11 @@ jobs:
         id: version
         run: |
           VER="${GITHUB_REF#refs/tags/v}"
-          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          MAJOR="${VER%%.*}"
+          MINOR="${VER%.*}"
+          echo "version=${VER}"   >> "$GITHUB_OUTPUT"
+          echo "major=${MAJOR}"   >> "$GITHUB_OUTPUT"
+          echo "minor=${MINOR}"   >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU (arm64 emulation)
         run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
@@ -155,12 +402,16 @@ jobs:
       - name: Build & Push (multi-arch)
         run: |
           VER="${{ steps.version.outputs.version }}"
+          MAJOR="${{ steps.version.outputs.major }}"
+          MINOR="${{ steps.version.outputs.minor }}"
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --sbom=true \
             --provenance=mode=max \
             --build-arg BETTERLINT_VERSION="${VER}" \
-            -t "${{ env.IMAGE }}:latest" \
             -t "${{ env.IMAGE }}:${VER}" \
+            -t "${{ env.IMAGE }}:${MINOR}" \
+            -t "${{ env.IMAGE }}:${MAJOR}" \
+            -t "${{ env.IMAGE }}:latest" \
             --push \
             .
