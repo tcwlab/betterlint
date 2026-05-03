@@ -251,10 +251,8 @@ jobs:
       - name: Run betterlint
         run: |
           set +e
-          bash -x /usr/local/bin/betterlint --dir . --markdown 2>&1 \
-            | tee /tmp/betterlint-report.md
+          betterlint --dir . --markdown 2>&1 | tee /tmp/betterlint-report.md
           LINT_EXIT="${PIPESTATUS[0]}"
-          echo "betterlint exit: ${LINT_EXIT}"
           exit "${LINT_EXIT}"
 
       - name: PR-Beschreibung mit Betterlint-Ergebnis aktualisieren
