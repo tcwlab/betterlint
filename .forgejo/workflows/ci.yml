@@ -113,7 +113,7 @@ jobs:
     steps:
       - name: Install Docker CLI
         run: |
-          curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz" \
+          curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-29.4.2.tgz" \
             -o /tmp/docker.tgz
           tar xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin docker/docker
 

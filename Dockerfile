@@ -16,7 +16,7 @@
 #####
 # STEP 1: base — OS-Pakete (alle Tools werden zur Laufzeit benötigt)
 #####
-FROM --platform=$BUILDPLATFORM node:22-alpine AS base
+FROM --platform=$BUILDPLATFORM node:24-alpine AS base
 ARG BUILDPLATFORM
 RUN apk add -U --no-cache \
       python3 \
@@ -43,15 +43,15 @@ LABEL org.opencontainers.image.title="betterlint" \
 
 # Node-basierte Linter (global, gepinnte Versionen)
 RUN npm install --global --no-fund --no-audit \
-      markdownlint-cli2@0.17.2 \
-      "@commitlint/cli@19" \
-      "@commitlint/config-conventional@19" \
-      "@stoplight/spectral-cli@6" \
+      markdownlint-cli2@0.22.1 \
+      "@commitlint/cli@20" \
+      "@commitlint/config-conventional@20" \
+      "@stoplight/spectral-cli@6.15.1" \
   && npm cache clean --force
 
 # Python-basierte Linter
 RUN pip3 install --break-system-packages --no-cache-dir \
-      "gherkin-official>=24,<29"
+      "gherkin-official==39.0.0"
 
 # Wrapper-Skript
 COPY betterlint.sh /usr/local/bin/betterlint
