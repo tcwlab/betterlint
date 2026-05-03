@@ -95,6 +95,14 @@ RUN npm install --global --no-fund --no-audit \
 RUN pip3 install --break-system-packages --no-cache-dir \
       "gherkin-official==39.0.0"
 
+# Default-Configs: greifen, wenn das Konsumenten-Repo keine eigene Config
+# mitbringt. Der Wrapper erkennt das Fehlen einer Config und gibt --config
+# explizit auf den jeweiligen Fallback-Pfad. Symlink macht die npm-globalen
+# Pakete (z.B. @commitlint/config-conventional) aus /etc/betterlint/defaults/
+# über reguläres Node-require auflösbar.
+COPY defaults/ /etc/betterlint/defaults/
+RUN ln -s /usr/local/lib/node_modules /etc/betterlint/defaults/node_modules
+
 # Wrapper-Skript
 COPY betterlint.sh /usr/local/bin/betterlint
 RUN chmod +x /usr/local/bin/betterlint
@@ -102,7 +110,7 @@ RUN chmod +x /usr/local/bin/betterlint
 # Non-root user
 RUN addgroup -S linter && adduser -S linter -G linter
 
-# Smoke-Test: alle Tools + Wrapper müssen aufrufbar sein
+# Smoke-Test: alle Tools, Wrapper und Default-Configs müssen aufrufbar/präsent sein
 ENV BETTERLINT_VERSION=${BETTERLINT_VERSION}
 RUN hadolint --version \
   && tflint --version \
@@ -113,7 +121,11 @@ RUN hadolint --version \
   && python3 -c "from gherkin.parser import Parser; print('gherkin ok')" \
   && jq --version \
   && yq --version \
-  && betterlint --version
+  && betterlint --version \
+  && test -f /etc/betterlint/defaults/markdownlint.json \
+  && test -f /etc/betterlint/defaults/commitlint.config.cjs \
+  && test -f /etc/betterlint/defaults/spectral.yaml \
+  && test -L /etc/betterlint/defaults/node_modules
 
 USER linter
 WORKDIR /workspace

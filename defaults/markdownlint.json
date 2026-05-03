@@ -1,0 +1,7 @@
+{
+  "_comment": "betterlint default markdownlint config — used when consumer repo has no own markdownlint config. Mirrors the betterlint repo's own self-lint config plus MD041=false (first-line-H1 is not a useful default for arbitrary doc layouts).",
+  "default": true,
+  "MD013": false,
+  "MD033": false,
+  "MD041": false
+}

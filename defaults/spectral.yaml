@@ -1,0 +1,7 @@
+# betterlint default spectral ruleset — used when consumer repo has no own
+# .spectral.yaml/.json/.js. Activates Stoplight's built-in OAS and AsyncAPI
+# rulesets so that openapi*.yaml / asyncapi*.yaml files get sensible
+# out-of-the-box validation.
+extends:
+  - spectral:oas
+  - spectral:asyncapi

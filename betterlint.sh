@@ -31,6 +31,12 @@ SKIP="${BETTERLINT_SKIP:-}"
 ONLY="${BETTERLINT_ONLY:-}"
 OUTPUT_MODE="text"
 
+# Default-Config-Verzeichnis im Image. Wird vom Dockerfile via
+# `COPY defaults/ /etc/betterlint/defaults/` befüllt. Über die Env-Variable
+# BETTERLINT_DEFAULTS_DIR kann der Pfad für lokale Tests umgebogen werden,
+# ohne im Image herumzupatchen.
+DEFAULTS_DIR="${BETTERLINT_DEFAULTS_DIR:-/etc/betterlint/defaults}"
+
 # ── Argument-Parsing ─────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -64,9 +70,15 @@ Verfügbare Tools:
   tflint        Terraform/OpenTofu-Dateien (.tf)
   shellcheck    Shell-Skripte (.sh)
   markdownlint  Markdown-Dateien (.md)
-  commitlint    Git-Commit-Messages (braucht Konfigurationsdatei)
+  commitlint    Git-Commit-Messages (Conventional Commits 1.0)
   spectral      OpenAPI / AsyncAPI (openapi*.yaml, asyncapi*.yaml)
   gherkin       Gherkin-Feature-Dateien (.feature)
+
+Default-Configs:
+  Wenn das Konsumenten-Repo keine eigene Konfiguration mitbringt, greift
+  betterlint auf die im Image gebackenen Defaults zurück
+  (/etc/betterlint/defaults/). Betroffene Tools: markdownlint, commitlint,
+  spectral. Vorhandene Konsumenten-Configs werden vorrangig benutzt.
 
 Beispiele:
   betterlint
@@ -170,7 +182,19 @@ if is_enabled markdownlint; then
     if [[ ${#MD_FILES[@]} -eq 0 ]]; then
         set_result markdownlint skip "keine .md-Dateien gefunden"
     else
-        if out=$(markdownlint-cli2 "**/*.md" "#node_modules" "#.git" 2>&1); then
+        # Konsumenten-Config suchen — wenn keine im Workdir liegt, den
+        # gebackenen Default aus dem Image nutzen, damit Repos ohne eigene
+        # markdownlint-Config nicht mehr mit ENOENT scheitern.
+        # Liste der Dateinamen muss mit den Pfaden übereinstimmen, die
+        # markdownlint-cli2 selbst erkennt.
+        markdownlint_cfg=(--config "${DEFAULTS_DIR}/markdownlint.json")
+        for _cfg in .markdownlint-cli2.jsonc .markdownlint-cli2.yaml .markdownlint-cli2.cjs \
+                    .markdownlint-cli2.mjs .markdownlint.jsonc .markdownlint.json \
+                    .markdownlint.yaml .markdownlint.yml .markdownlint.cjs \
+                    .markdownlint.mjs .markdownlintrc; do
+            if [[ -f "$_cfg" ]]; then markdownlint_cfg=(); break; fi
+        done
+        if out=$(markdownlint-cli2 "${markdownlint_cfg[@]}" "**/*.md" "#node_modules" "#.git" 2>&1); then
             set_result markdownlint ok
         else
             set_result markdownlint fail "$out"
@@ -180,16 +204,20 @@ fi
 
 # ── commitlint ───────────────────────────────────────────────────────────────
 if is_enabled commitlint; then
-    # Nur ausführen wenn Konfigurationsdatei vorhanden ist
-    if ! find . -maxdepth 2 \( \
-            -name ".commitlintrc*" -o \
-            -name "commitlint.config.*" \) \
-            ! -path "./.git/*" 2>/dev/null | grep -q .; then
-        set_result commitlint skip "keine Konfigurationsdatei gefunden"
-    elif ! command -v git &>/dev/null || ! git rev-parse HEAD &>/dev/null 2>&1; then
+    if ! command -v git &>/dev/null || ! git rev-parse HEAD &>/dev/null 2>&1; then
         set_result commitlint skip "kein Git-Repository"
     else
-        if out=$(git log -1 --pretty=%B 2>&1 | commitlint 2>&1); then
+        # Konsumenten-Config suchen; ohne Treffer Fallback nutzen, damit
+        # Conventional-Commits-Validierung auch in Repos ohne eigene
+        # commitlint-Config greift.
+        commitlint_cfg=(--config "${DEFAULTS_DIR}/commitlint.config.cjs")
+        if find . -maxdepth 2 \( \
+                -name ".commitlintrc*" -o \
+                -name "commitlint.config.*" \) \
+                ! -path "./.git/*" 2>/dev/null | grep -q .; then
+            commitlint_cfg=()
+        fi
+        if out=$(git log -1 --pretty=%B 2>&1 | commitlint "${commitlint_cfg[@]}" 2>&1); then
             set_result commitlint ok
         else
             set_result commitlint fail "$out"
@@ -206,9 +234,15 @@ if is_enabled spectral; then
     if [[ ${#API_FILES[@]} -eq 0 ]]; then
         set_result spectral skip "keine OpenAPI/AsyncAPI-Dateien gefunden"
     else
+        # Konsumenten-Ruleset suchen; sonst gebackenen Default verwenden
+        # (aktiviert spectral:oas + spectral:asyncapi).
+        spectral_cfg=(--ruleset "${DEFAULTS_DIR}/spectral.yaml")
+        for _cfg in .spectral.yaml .spectral.yml .spectral.json .spectral.js; do
+            if [[ -f "$_cfg" ]]; then spectral_cfg=(); break; fi
+        done
         out=""; ok=true
         for f in "${API_FILES[@]}"; do
-            r=$(spectral lint "$f" 2>&1) || { out+="$f: $r"$'\n'; ok=false; }
+            r=$(spectral lint "${spectral_cfg[@]}" "$f" 2>&1) || { out+="$f: $r"$'\n'; ok=false; }
         done
         if $ok; then set_result spectral ok; else set_result spectral fail "$out"; fi
     fi
