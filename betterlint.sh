@@ -137,8 +137,8 @@ fi
 
 # ── tflint ───────────────────────────────────────────────────────────────────
 if is_enabled tflint; then
-    mapfile -t TF_DIRS < <(find . -name "*.tf" ! -path "./.git/*" 2>/dev/null \
-        -exec dirname {} \; | sort -u || true)
+    mapfile -t TF_DIRS < <(find . -name "*.tf" ! -path "./.git/*" \
+        -exec dirname {} \; 2>/dev/null | sort -u || true)
     if [[ ${#TF_DIRS[@]} -eq 0 ]]; then
         set_result tflint skip "keine .tf-Dateien gefunden"
     else
