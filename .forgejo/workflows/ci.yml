@@ -2,11 +2,13 @@
 # chameleon-ci / betterlint — Build & Publish
 #
 # CI-Images:
-#   tcwlab/betterlint:latest → Dockerfile-Linting
-#   tcwlab/buildx:0.33.0    → docker build / buildx (amd64 + arm64)
-#   tcwlab/trivy:0.70.0     → Security Scan
-#   tcwlab/forgejo-build:betterlint-<sha>  → betterlint Self-Check
+#   tcwlab/buildx:0.33.0   → docker build / buildx (amd64 + arm64)
+#   tcwlab/trivy:0.70.0    → Security Scan
+#   tcwlab/forgejo-build:betterlint-<sha>  → betterlint Self-Check (inkl. hadolint)
 #
+# Hinweis: Kein separater lint-Job — betterlint-check übernimmt das Dockerfile-
+# Linting via Staging-Image. Ein eigenständiger lint-Job würde tcwlab/betterlint:latest
+# voraussetzen, das erst durch diesen Workflow veröffentlicht wird (Bootstrap-Zirkel).
 # Checkout: Shell-basiert (git init + git fetch) — kein Node.js nötig.
 # Docker-Daemon: tcp://docker-in-docker:2375 (runner-net).
 #
@@ -36,27 +38,6 @@ env:
   DOCKER_BUILDKIT: "1"
 
 jobs:
-
-  # ---------------------------------------------------------------------------
-  lint:
-    name: Dockerfile Lint
-    runs-on: ubuntu-22.04
-    container:
-      image: tcwlab/betterlint:latest
-    steps:
-      - name: Checkout
-        env:
-          GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
-        run: |
-          git config --global init.defaultBranch main
-          git init .
-          git remote add origin \
-            "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
-          git fetch --depth=1 origin "${GITHUB_SHA}"
-          git checkout FETCH_HEAD
-
-      - name: hadolint
-        run: betterlint --only hadolint
 
   # ---------------------------------------------------------------------------
   build-test:
@@ -358,7 +339,7 @@ jobs:
   publish:
     name: Publish to Docker Hub (linux/amd64 + linux/arm64)
     runs-on: ubuntu-22.04
-    needs: [lint, build-test, security, betterlint-check]
+    needs: [build-test, security, betterlint-check]
     if: startsWith(github.ref, 'refs/tags/v')
     container:
       image: tcwlab/buildx:0.33.0
