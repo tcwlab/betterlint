@@ -250,10 +250,10 @@ jobs:
 
       - name: Run betterlint
         run: |
-          betterlint --markdown > /tmp/betterlint-report.md
-          LINT_EXIT=$?
-          cat /tmp/betterlint-report.md
-          exit $LINT_EXIT
+          # tee: Ausgabe erscheint im CI-Log UND landet in der Report-Datei.
+          # PIPESTATUS[0]: Exit-Code von betterlint, nicht von tee.
+          betterlint --markdown 2>&1 | tee /tmp/betterlint-report.md
+          exit "${PIPESTATUS[0]}"
 
       - name: PR-Beschreibung mit Betterlint-Ergebnis aktualisieren
         if: always()
