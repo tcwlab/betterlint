@@ -104,17 +104,18 @@ jobs:
   # ---------------------------------------------------------------------------
   security:
     name: Trivy Security Scan
+    # ubuntu-22.04 direkt (kein Container) — Python3 ist auf dem Runner vorhanden.
+    # Docker CLI wird manuell installiert; kein tcwlab/buildx-Container hier.
     runs-on: ubuntu-22.04
     needs: [build-test]
-    container:
-      image: tcwlab/buildx:0.33.0
     env:
       DOCKER_HOST: tcp://docker-in-docker:2375
     steps:
-      - name: Docker Hub Login
+      - name: Install Docker CLI
         run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
-            | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz" \
+            -o /tmp/docker.tgz
+          tar xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin docker/docker
 
       - name: Trivy Scan (JSON)
         run: |
