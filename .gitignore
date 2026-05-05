@@ -1,11 +1,11 @@
-# Build-Artefakte
+# Build artifacts
 node_modules/
 .cache/
 *.log
 *.tmp
 .DS_Store
 
-# Lokale Entwicklung
+# Local development
 .env
 .env.local
 

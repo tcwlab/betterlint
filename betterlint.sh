@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# betterlint — schlanke Multi-Linter-Alternative zu MegaLinter
+# betterlint — compact multi-linter alternative to MegaLinter
 #
-# Erkennt automatisch, welche Dateitypen vorhanden sind, und führt nur die
-# passenden Linter aus. Jeder Linter kann über --skip/--only oder Umgebungs-
-# variablen gezielt ein- und ausgeschaltet werden.
+# Auto-detects which file types are present and runs only the relevant
+# linters. Each linter can be turned on/off with --skip/--only or via
+# environment variables.
 #
-# Unterstützte Tools:
-#   hadolint      Dockerfile-Linting
-#   tflint        Terraform/OpenTofu-Dateien
-#   ShellCheck    .sh-Dateien
-#   markdownlint  .md-Dateien
-#   commitlint    Git-Commit-Messages (nur wenn Konfiguration vorhanden)
+# Supported tools:
+#   hadolint      Dockerfile linting
+#   tflint        Terraform/OpenTofu files
+#   ShellCheck    .sh files
+#   markdownlint  .md files
+#   commitlint    Git commit messages (only when a config is present)
 #   spectral      OpenAPI / AsyncAPI (openapi*.yaml, asyncapi*.yaml)
-#   gherkin       .feature-Dateien
+#   gherkin       .feature files
 #
 # Usage:
 #   betterlint [--skip TOOL,...] [--only TOOL,...] [--dir PATH] [--markdown]
 #
-# Umgebungsvariablen (werden durch Flags überschrieben):
-#   BETTERLINT_SKIP   Kommagetrennte Tools zum Überspringen
-#   BETTERLINT_ONLY   Nur diese Tools ausführen
-#   BETTERLINT_DIR    Ziel-Verzeichnis (Standard: /workspace)
+# Environment variables (overridden by flags):
+#   BETTERLINT_SKIP   Comma-separated list of tools to skip
+#   BETTERLINT_ONLY   Run only these tools
+#   BETTERLINT_DIR    Target directory (default: /workspace)
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -31,13 +31,12 @@ SKIP="${BETTERLINT_SKIP:-}"
 ONLY="${BETTERLINT_ONLY:-}"
 OUTPUT_MODE="text"
 
-# Default-Config-Verzeichnis im Image. Wird vom Dockerfile via
-# `COPY defaults/ /etc/betterlint/defaults/` befüllt. Über die Env-Variable
-# BETTERLINT_DEFAULTS_DIR kann der Pfad für lokale Tests umgebogen werden,
-# ohne im Image herumzupatchen.
+# Default config directory inside the image. The Dockerfile populates it
+# via `COPY defaults/ /etc/betterlint/defaults/`. The BETTERLINT_DEFAULTS_DIR
+# env var lets local tests redirect the path without patching the image.
 DEFAULTS_DIR="${BETTERLINT_DEFAULTS_DIR:-/etc/betterlint/defaults}"
 
-# ── Argument-Parsing ─────────────────────────────────────────────────────────
+# ── Argument parsing ────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --skip)
@@ -52,35 +51,35 @@ while [[ $# -gt 0 ]]; do
             echo "betterlint ${VERSION}"; exit 0 ;;
         --help|-h)
             cat <<'HELP'
-betterlint — schlanke Multi-Linter-Alternative zu MegaLinter
+betterlint — compact multi-linter alternative to MegaLinter
 
 Usage:
   betterlint [OPTIONS]
 
-Optionen:
-  --skip TOOL,...   Tools überspringen (Kommaliste)
-  --only TOOL,...   Nur diese Tools ausführen (Kommaliste)
-  --dir  PATH       Ziel-Verzeichnis (Standard: /workspace)
-  --markdown        Ausgabe als Markdown-Tabelle (für PR-Beschreibungen)
-  --version         Version ausgeben
-  --help            Diese Hilfe
+Options:
+  --skip TOOL,...   Skip these tools (comma-separated list)
+  --only TOOL,...   Run only these tools (comma-separated list)
+  --dir  PATH       Target directory (default: /workspace)
+  --markdown        Emit a Markdown table (for PR comments)
+  --version         Print version
+  --help            This help text
 
-Verfügbare Tools:
+Available tools:
   hadolint      Dockerfiles (Dockerfile*)
-  tflint        Terraform/OpenTofu-Dateien (.tf)
-  shellcheck    Shell-Skripte (.sh)
-  markdownlint  Markdown-Dateien (.md)
-  commitlint    Git-Commit-Messages (Conventional Commits 1.0)
+  tflint        Terraform/OpenTofu files (.tf)
+  shellcheck    Shell scripts (.sh)
+  markdownlint  Markdown files (.md)
+  commitlint    Git commit messages (Conventional Commits 1.0)
   spectral      OpenAPI / AsyncAPI (openapi*.yaml, asyncapi*.yaml)
-  gherkin       Gherkin-Feature-Dateien (.feature)
+  gherkin       Gherkin feature files (.feature)
 
-Default-Configs:
-  Wenn das Konsumenten-Repo keine eigene Konfiguration mitbringt, greift
-  betterlint auf die im Image gebackenen Defaults zurück
-  (/etc/betterlint/defaults/). Betroffene Tools: markdownlint, commitlint,
-  spectral. Vorhandene Konsumenten-Configs werden vorrangig benutzt.
+Default configs:
+  When the consumer repo ships no own configuration, betterlint falls
+  back to the defaults baked into the image at /etc/betterlint/defaults/.
+  Affected tools: markdownlint, commitlint, spectral. Existing consumer
+  configs always win.
 
-Beispiele:
+Examples:
   betterlint
   betterlint --skip commitlint,spectral
   betterlint --only hadolint,tflint
@@ -89,13 +88,13 @@ Beispiele:
 HELP
             exit 0 ;;
         *)
-            echo "Unbekannte Option: $1" >&2
-            echo "Hilfe: betterlint --help" >&2
+            echo "Unknown option: $1" >&2
+            echo "Help: betterlint --help" >&2
             exit 1 ;;
     esac
 done
 
-# ── Hilfsfunktionen ──────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────
 
 is_enabled() {
     local t="$1"
@@ -111,29 +110,29 @@ is_enabled() {
 }
 
 declare -A STATUS=()   # ok | fail | skip
-declare -A DETAIL=()   # Fehlerdetails (max 400 Zeichen)
+declare -A DETAIL=()   # error detail (max 400 chars)
 OVERALL_FAIL=false
 
 set_result() {
     local name="$1" status="$2" detail="${3:-}"
     STATUS[$name]="$status"
     DETAIL[$name]="${detail:0:400}"
-    # if/fi statt &&: verhindert, dass set -e greift wenn status != "fail"
+    # Use if/fi instead of && — prevents `set -e` from tripping when status != "fail"
     if [[ "$status" == "fail" ]]; then OVERALL_FAIL=true; fi
 }
 
-# ── Verzeichnis wechseln ─────────────────────────────────────────────────────
+# ── Switch directory ────────────────────────────────────────────────────────
 cd "$DIR"
 
-# ── hadolint ─────────────────────────────────────────────────────────────────
+# ── hadolint ────────────────────────────────────────────────────────────────
 if is_enabled hadolint; then
     mapfile -t DOCKER_FILES < <(find . \( -name "Dockerfile" -o -name "Dockerfile.*" \) \
         ! -path "./.git/*" 2>/dev/null || true)
     if [[ ${#DOCKER_FILES[@]} -eq 0 ]]; then
-        set_result hadolint skip "keine Dockerfiles gefunden"
+        set_result hadolint skip "no Dockerfiles found"
     else
-        # Config-Datei explizit übergeben falls vorhanden (hadolint findet sie
-        # je nach Version nicht immer automatisch aus dem CWD)
+        # Pass the config file explicitly when present (depending on the
+        # version, hadolint does not always discover it from the CWD).
         hadolint_cfg=()
         for _cfg in ".hadolint.yaml" ".hadolint.yml"; do
             if [[ -f "$_cfg" ]]; then hadolint_cfg=(--config "$_cfg"); break; fi
@@ -147,12 +146,12 @@ if is_enabled hadolint; then
     fi
 fi
 
-# ── tflint ───────────────────────────────────────────────────────────────────
+# ── tflint ──────────────────────────────────────────────────────────────────
 if is_enabled tflint; then
     mapfile -t TF_DIRS < <(find . -name "*.tf" ! -path "./.git/*" \
         -exec dirname {} \; 2>/dev/null | sort -u || true)
     if [[ ${#TF_DIRS[@]} -eq 0 ]]; then
-        set_result tflint skip "keine .tf-Dateien gefunden"
+        set_result tflint skip "no .tf files found"
     else
         out=""; ok=true
         for d in "${TF_DIRS[@]}"; do
@@ -162,11 +161,11 @@ if is_enabled tflint; then
     fi
 fi
 
-# ── shellcheck ───────────────────────────────────────────────────────────────
+# ── shellcheck ──────────────────────────────────────────────────────────────
 if is_enabled shellcheck; then
     mapfile -t SH_FILES < <(find . -name "*.sh" ! -path "./.git/*" 2>/dev/null || true)
     if [[ ${#SH_FILES[@]} -eq 0 ]]; then
-        set_result shellcheck skip "keine .sh-Dateien gefunden"
+        set_result shellcheck skip "no .sh files found"
     else
         out=""; ok=true
         for f in "${SH_FILES[@]}"; do
@@ -176,17 +175,17 @@ if is_enabled shellcheck; then
     fi
 fi
 
-# ── markdownlint ─────────────────────────────────────────────────────────────
+# ── markdownlint ────────────────────────────────────────────────────────────
 if is_enabled markdownlint; then
     mapfile -t MD_FILES < <(find . -name "*.md" ! -path "./.git/*" 2>/dev/null || true)
     if [[ ${#MD_FILES[@]} -eq 0 ]]; then
-        set_result markdownlint skip "keine .md-Dateien gefunden"
+        set_result markdownlint skip "no .md files found"
     else
-        # Konsumenten-Config suchen — wenn keine im Workdir liegt, den
-        # gebackenen Default aus dem Image nutzen, damit Repos ohne eigene
-        # markdownlint-Config nicht mehr mit ENOENT scheitern.
-        # Liste der Dateinamen muss mit den Pfaden übereinstimmen, die
-        # markdownlint-cli2 selbst erkennt.
+        # Look for a consumer config — when none is in the workdir, use
+        # the default baked into the image, so repos without their own
+        # markdownlint config no longer fail with ENOENT.
+        # The list of file names must match the paths that
+        # markdownlint-cli2 itself discovers.
         markdownlint_cfg=(--config "${DEFAULTS_DIR}/markdownlint.json")
         for _cfg in .markdownlint-cli2.jsonc .markdownlint-cli2.yaml .markdownlint-cli2.cjs \
                     .markdownlint-cli2.mjs .markdownlint.jsonc .markdownlint.json \
@@ -202,14 +201,14 @@ if is_enabled markdownlint; then
     fi
 fi
 
-# ── commitlint ───────────────────────────────────────────────────────────────
+# ── commitlint ──────────────────────────────────────────────────────────────
 if is_enabled commitlint; then
     if ! command -v git &>/dev/null || ! git rev-parse HEAD &>/dev/null 2>&1; then
-        set_result commitlint skip "kein Git-Repository"
+        set_result commitlint skip "not a git repository"
     else
-        # Konsumenten-Config suchen; ohne Treffer Fallback nutzen, damit
-        # Conventional-Commits-Validierung auch in Repos ohne eigene
-        # commitlint-Config greift.
+        # Look for a consumer config; fall back to the default so
+        # Conventional Commits validation also fires in repos without
+        # their own commitlint config.
         commitlint_cfg=(--config "${DEFAULTS_DIR}/commitlint.config.cjs")
         if find . -maxdepth 2 \( \
                 -name ".commitlintrc*" -o \
@@ -225,17 +224,17 @@ if is_enabled commitlint; then
     fi
 fi
 
-# ── spectral ─────────────────────────────────────────────────────────────────
+# ── spectral ────────────────────────────────────────────────────────────────
 if is_enabled spectral; then
     mapfile -t API_FILES < <(find . \
         \( -name "openapi*.yaml" -o -name "openapi*.yml" \
            -o -name "asyncapi*.yaml" -o -name "asyncapi*.yml" \) \
         ! -path "./.git/*" ! -path "./node_modules/*" 2>/dev/null || true)
     if [[ ${#API_FILES[@]} -eq 0 ]]; then
-        set_result spectral skip "keine OpenAPI/AsyncAPI-Dateien gefunden"
+        set_result spectral skip "no OpenAPI/AsyncAPI files found"
     else
-        # Konsumenten-Ruleset suchen; sonst gebackenen Default verwenden
-        # (aktiviert spectral:oas + spectral:asyncapi).
+        # Look for a consumer ruleset; otherwise use the default baked
+        # into the image (activates spectral:oas + spectral:asyncapi).
         spectral_cfg=(--ruleset "${DEFAULTS_DIR}/spectral.yaml")
         for _cfg in .spectral.yaml .spectral.yml .spectral.json .spectral.js; do
             if [[ -f "$_cfg" ]]; then spectral_cfg=(); break; fi
@@ -248,15 +247,15 @@ if is_enabled spectral; then
     fi
 fi
 
-# ── gherkin ──────────────────────────────────────────────────────────────────
+# ── gherkin ─────────────────────────────────────────────────────────────────
 if is_enabled gherkin; then
     mapfile -t FEAT_FILES < <(find . -name "*.feature" ! -path "./.git/*" 2>/dev/null || true)
     if [[ ${#FEAT_FILES[@]} -eq 0 ]]; then
-        set_result gherkin skip "keine .feature-Dateien gefunden"
+        set_result gherkin skip "no .feature files found"
     else
         out=""; ok=true
         for f in "${FEAT_FILES[@]}"; do
-            # Wir lesen den Dateipfad in eine Variable, um ihn sicher im heredoc zu nutzen
+            # Read the file path into a variable so we can use it safely inside the heredoc
             FEATURE_FILE="$f"
             r=$(python3 - <<PYEOF 2>&1
 from gherkin.parser import Parser
@@ -276,14 +275,14 @@ PYEOF
     fi
 fi
 
-# ── Ausgabe ───────────────────────────────────────────────────────────────────
+# ── Output ──────────────────────────────────────────────────────────────────
 TOOLS=(hadolint tflint shellcheck markdownlint commitlint spectral gherkin)
 
 if [[ "$OUTPUT_MODE" == "markdown" ]]; then
     if $OVERALL_FAIL; then
-        echo "**❌ Linting fehlgeschlagen**"
+        echo "**❌ Linting failed**"
     else
-        echo "**✅ Alle Linting-Checks bestanden**"
+        echo "**✅ All linting checks passed**"
     fi
     echo ""
     echo "| Tool | Status | Details |"
@@ -291,11 +290,11 @@ if [[ "$OUTPUT_MODE" == "markdown" ]]; then
     for t in "${TOOLS[@]}"; do
         s="${STATUS[$t]:-skip}"
         d="${DETAIL[$t]:-}"
-        # Markdown-Sonderzeichen escapen
+        # Escape Markdown special characters
         d="${d//|/,}"
         d="${d//$'\n'/ }"
         d="${d//\`/\'}"
-        # ANSI-Codes entfernen
+        # Strip ANSI codes
         d=$(printf '%s' "$d" | sed 's/\x1b\[[0-9;]*m//g')
         case "$s" in
             ok)   echo "| \`$t\` | ✅ | |" ;;
@@ -314,7 +313,7 @@ else
         esac
     done
 
-    # Fehlerdetails ausgeben
+    # Print error details
     for t in "${TOOLS[@]}"; do
         if [[ "${STATUS[$t]:-}" == "fail" ]]; then
             printf "\n── %s ──\n%s\n" "$t" "${DETAIL[$t]}"

@@ -1,22 +1,22 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # tcwlab/betterlint
 #
-# Schlanke All-in-One-Linter-Alternative zu MegaLinter für TCW-CI-Pipelines.
-# Enthält alle Linting-Tools, die wir einsetzen:
+# Compact all-in-one linter alternative to MegaLinter for TCW CI pipelines.
+# Bundles every linting tool we use:
 #
-#   hadolint        Dockerfile-Linting
-#   tflint          Terraform/OpenTofu-Linting
-#   shellcheck      Shell-Skripte
-#   markdownlint    Markdown-Dateien
-#   commitlint      Git-Commit-Messages
+#   hadolint        Dockerfile linting
+#   tflint          Terraform/OpenTofu linting
+#   shellcheck      Shell scripts
+#   markdownlint    Markdown files
+#   commitlint      Git commit messages
 #   spectral        OpenAPI / AsyncAPI
-#   gherkin         Feature-Dateien
-#   jq              JSON-Processor (Validierung + Filter)
-#   yq              YAML-Processor (Validierung + Filter)
+#   gherkin         Feature files
+#   jq              JSON processor (validation + filter)
+#   yq              YAML processor (validation + filter)
 #
 # Wrapper: /usr/local/bin/betterlint  (auto-detect, --skip/--only, --markdown)
 #
-# Unterstützte Plattformen: linux/amd64, linux/arm64
+# Supported platforms: linux/amd64, linux/arm64
 #
 # Build (multi-arch):
 #   docker buildx build --platform linux/amd64,linux/arm64 \
@@ -25,7 +25,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 #####
-# STEP 1: base — OS-Pakete
+# STEP 1: base — OS packages
 #####
 FROM --platform=$BUILDPLATFORM node:24-alpine AS base
 ARG BUILDPLATFORM
@@ -45,7 +45,7 @@ RUN apk add -U --no-cache \
     rm -rf /var/cache/apk/*
 
 #####
-# STEP 2: release — alle Linter + Wrapper
+# STEP 2: release — every linter + the wrapper
 #####
 FROM base AS release
 ARG BETTERLINT_VERSION=dev
@@ -56,10 +56,10 @@ LABEL org.opencontainers.image.title="betterlint" \
       org.opencontainers.image.description="All-in-one linter: hadolint, tflint, shellcheck, markdownlint, commitlint, spectral, gherkin, jq, yq" \
       org.opencontainers.image.vendor="The Chameleon Way" \
       org.opencontainers.image.url="https://hub.docker.com/r/tcwlab/betterlint" \
-      org.opencontainers.image.source="https://git.mon.k8b.co/chameleon-ci/betterlint" \
+      org.opencontainers.image.source="https://git.mon.k8b.co/tcwlab/betterlint" \
       org.opencontainers.image.version="${BETTERLINT_VERSION}"
 
-# hadolint + tflint: arch-aware Binary-Downloads
+# hadolint + tflint: arch-aware binary downloads
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN case "$(apk --print-arch)" in \
       aarch64) \
@@ -68,7 +68,7 @@ RUN case "$(apk --print-arch)" in \
       x86_64) \
         HADOLINT_ARCH="x86_64" ; \
         TFLINT_ARCH="amd64" ;; \
-      *) echo "Nicht unterstützte Architektur: $(apk --print-arch)" && exit 1 ;; \
+      *) echo "Unsupported architecture: $(apk --print-arch)" && exit 1 ;; \
     esac && \
     curl -fsSL \
       "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${HADOLINT_ARCH}" \
@@ -83,7 +83,7 @@ RUN case "$(apk --print-arch)" in \
     hadolint --version && \
     tflint --version
 
-# Node-basierte Linter (global, gepinnte Versionen)
+# Node-based linters (global, version-pinned)
 RUN npm install --global --no-fund --no-audit \
       markdownlint-cli2@0.22.1 \
       "@commitlint/cli@20" \
@@ -91,26 +91,26 @@ RUN npm install --global --no-fund --no-audit \
       "@stoplight/spectral-cli@6.15.1" \
   && npm cache clean --force
 
-# Python-basierte Linter
+# Python-based linters
 RUN pip3 install --break-system-packages --no-cache-dir \
       "gherkin-official==39.0.0"
 
-# Default-Configs: greifen, wenn das Konsumenten-Repo keine eigene Config
-# mitbringt. Der Wrapper erkennt das Fehlen einer Config und gibt --config
-# explizit auf den jeweiligen Fallback-Pfad. Symlink macht die npm-globalen
-# Pakete (z.B. @commitlint/config-conventional) aus /etc/betterlint/defaults/
-# über reguläres Node-require auflösbar.
+# Default configs: applied when the consumer repo ships no own config.
+# The wrapper detects a missing config and passes --config explicitly to
+# the corresponding fallback path. The symlink makes the npm-global
+# packages (e.g. @commitlint/config-conventional) resolvable from
+# /etc/betterlint/defaults/ via standard Node require().
 COPY defaults/ /etc/betterlint/defaults/
 RUN ln -s /usr/local/lib/node_modules /etc/betterlint/defaults/node_modules
 
-# Wrapper-Skript
+# Wrapper script
 COPY betterlint.sh /usr/local/bin/betterlint
 RUN chmod +x /usr/local/bin/betterlint
 
 # Non-root user
 RUN addgroup -S linter && adduser -S linter -G linter
 
-# Smoke-Test: alle Tools, Wrapper und Default-Configs müssen aufrufbar/präsent sein
+# Smoke test: every tool, the wrapper, and all default configs must be present
 ENV BETTERLINT_VERSION=${BETTERLINT_VERSION}
 RUN hadolint --version \
   && tflint --version \

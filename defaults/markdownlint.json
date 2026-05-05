@@ -1,7 +1,8 @@
 {
-  "_comment": "betterlint default markdownlint config — used when consumer repo has no own markdownlint config. Mirrors the betterlint repo's own self-lint config plus MD041=false (first-line-H1 is not a useful default for arbitrary doc layouts).",
+  "_comment": "betterlint default markdownlint config — used when consumer repo has no own markdownlint config. Mirrors the betterlint repo's own self-lint config plus MD041=false (first-line-H1 is not a useful default for arbitrary doc layouts) and MD060=false (table-column-style is purely cosmetic).",
   "default": true,
   "MD013": false,
   "MD033": false,
-  "MD041": false
+  "MD041": false,
+  "MD060": false
 }

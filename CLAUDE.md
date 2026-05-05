@@ -1,22 +1,22 @@
-# betterlint — Repo-Kontext
+# betterlint — repo context
 
-> **Onboarding-Handshake:** Lies in dieser Reihenfolge:
+> **Onboarding handshake.** Read in this order:
 >
-> 1. [`Projects/CLAUDE.md`](https://git.mon.k8b.co/) (globale Standards)
-> 2. [`chameleon-ci/CLAUDE.md`](https://git.mon.k8b.co/chameleon-ci/) (Toolchain-Kontext, Konsumenten-API)
-> 3. Diese Datei (betterlint-spezifisches)
+> 1. [`Projects/CLAUDE.md`](https://git.mon.k8b.co/) (global standards)
+> 2. [`tcwlab/CLAUDE.md`](https://git.mon.k8b.co/tcwlab/) (toolchain context, consumer API)
+> 3. This file (betterlint-specific notes)
 
 ---
 
-## Was ist `betterlint`?
+## What is `betterlint`?
 
-`betterlint` ist das All-in-One-Linter-Image der chameleon-ci-Toolchain. Statt MegaLinters >1 GB-Footprint (mit zig Lintern, die TCW gar nicht braucht) liefert `betterlint` ein kompaktes Alpine-Node-Image (~300 MB), in dem genau die Linter installiert sind, die in unseren Pipelines tatsächlich laufen: hadolint für Dockerfiles, tflint für OpenTofu, shellcheck für Shell-Skripte, markdownlint für Doku, commitlint für Conventional-Commits-Disziplin, spectral für OpenAPI/AsyncAPI und gherkin-official für BDD-Feature-Files.
+`betterlint` is the all-in-one linter image of the tcwlab toolchain. Instead of the >1 GB MegaLinter footprint (which carries linters TCW does not use), `betterlint` ships a compact Alpine/Node image (~300 MB) with exactly the linters our pipelines rely on: `hadolint` for Dockerfiles, `tflint` for OpenTofu, `shellcheck` for shell scripts, `markdownlint` for docs, `commitlint` for Conventional Commits discipline, `spectral` for OpenAPI/AsyncAPI, and `gherkin-official` for BDD feature files.
 
-Das Repo ist gleichzeitig der **Single-Source-of-Truth für Linter-Versionen in der gesamten TCW-Welt**. Wenn ein Vertical eine andere hadolint-Version braucht, ist das ein Indikator, dass entweder das Vertical falsch liegt oder die Toolchain einen Bump fällig hat. Drift wird in `betterlint` aufgelöst, nicht in einzelnen Konsumenten-Repos.
+The repo is also the **single source of truth for linter versions across the entire TCW world**. If a vertical needs a different `hadolint` version, that is a signal that either the vertical is wrong or the toolchain is overdue for a bump. Drift gets resolved in `betterlint`, never in individual consumer repos.
 
-### Konsumenten
+### Consumers
 
-Alle Konsumenten-Verticals der TCW-Welt nutzen `betterlint` im Lint-Job ihrer `.forgejo/workflows/ci.yml`:
+Every consumer vertical of the TCW world wires `betterlint` into the lint job of its `.forgejo/workflows/ci.yml`:
 
 ```yaml
 lint:
@@ -28,95 +28,95 @@ lint:
     - run: betterlint --dir .
 ```
 
-Konkret eingebunden in: alle `Atrium/*`, `Spectrum/*`, `Tally/*`, `IdentServ/*`, `K8Box/*`, `IzyPhlirt/*`, `Testiversum/*`, `Sutagil/*`, plus die anderen `chameleon-ci/*`-Repos (cross-eating-our-own-dogfood: `opentofu`, `buildx`, `trivy`, `semantic-release` werden alle von `betterlint` selbst gelintet).
+In practice that covers every `Atrium/*`, `Spectrum/*`, `Tally/*`, `IdentServ/*`, `K8Box/*`, `IzyPhlirt/*`, `Testiversum/*`, `Sutagil/*`, plus the other `tcwlab/*` repos (cross-eating-our-own-dogfood: `opentofu`, `buildx`, `trivy`, `semantic-release` are all linted by `betterlint` itself).
 
 ---
 
-## Was ist drin?
+## What's inside?
 
-Der Image-Inhalt — exakt wie im [Dockerfile](https://git.mon.k8b.co/chameleon-ci/betterlint/src/branch/main/Dockerfile) deklariert:
+The image contents — exactly as declared in the [Dockerfile](https://git.mon.k8b.co/tcwlab/betterlint/src/branch/main/Dockerfile):
 
-| Tool | Version | Quelle | Aufgabe |
-| ---- | ------- | ------ | ------- |
-| `hadolint` | `2.14.0` | GitHub-Release-Binary, arch-aware | Dockerfile-Lint |
-| `tflint` | `0.62.0` | GitHub-Release-Binary, arch-aware | OpenTofu/Terraform-Lint |
-| `shellcheck` | via apk (alpine 3.23) | Alpine-Paket | Shell-Skript-Lint |
-| `markdownlint-cli2` | `0.22.1` | npm global | Markdown-Lint |
-| `@commitlint/cli` | `20.x` | npm global | Conventional-Commits-Validator |
-| `@commitlint/config-conventional` | `20.x` | npm global | Standard-Regelset |
-| `@stoplight/spectral-cli` | `6.15.1` | npm global | OpenAPI/AsyncAPI-Lint |
-| `gherkin-official` | `39.0.0` | pip3 (`--break-system-packages`) | Gherkin-Syntax-Validator |
+| Tool | Version | Source | Job |
+|------|---------|--------|-----|
+| `hadolint` | `2.14.0` | GitHub release binary, arch-aware | Dockerfile lint |
+| `tflint` | `0.62.0` | GitHub release binary, arch-aware | OpenTofu/Terraform lint |
+| `shellcheck` | from apk (Alpine 3.23) | Alpine package | Shell script lint |
+| `markdownlint-cli2` | `0.22.1` | npm global | Markdown lint |
+| `@commitlint/cli` | `20.x` | npm global | Conventional Commits validator |
+| `@commitlint/config-conventional` | `20.x` | npm global | Default rule set |
+| `@stoplight/spectral-cli` | `6.15.1` | npm global | OpenAPI/AsyncAPI lint |
+| `gherkin-official` | `39.0.0` | pip3 (`--break-system-packages`) | Gherkin syntax validator |
 
-Plus der zentrale Wrapper [`betterlint.sh`](https://git.mon.k8b.co/chameleon-ci/betterlint/src/branch/main/betterlint.sh) als `/usr/local/bin/betterlint`. Auto-Detect-Logik: betrachtet das Workdir und führt nur die Linter aus, deren Datei-Patterns matchen. Optionen: `--skip TOOL,...`, `--only TOOL,...`, `--dir PATH`, `--markdown` (für PR-Kommentar-Output), `--version`.
+Plus the central wrapper [`betterlint.sh`](https://git.mon.k8b.co/tcwlab/betterlint/src/branch/main/betterlint.sh) installed as `/usr/local/bin/betterlint`. Auto-detect logic: it inspects the workdir and runs only the linters whose file patterns match. Options: `--skip TOOL,...`, `--only TOOL,...`, `--dir PATH`, `--markdown` (for PR comment output), `--version`.
 
-Base-Image: `node:24-alpine` als BUILDPLATFORM-aware Multi-Stage-Build. Das Image wird für `linux/amd64` und `linux/arm64` gebaut.
+Base image: `node:24-alpine` as a BUILDPLATFORM-aware multi-stage build. The image is built for `linux/amd64` and `linux/arm64`.
 
-User: non-root `linter`-User. Workdir: `/workspace` (Konventionen-konform für Forgejo-Container-Jobs).
+User: non-root `linter` user. Workdir: `/workspace` (the convention for Forgejo container jobs).
 
 ---
 
-## Tool-Versionen und Pinning-Strategie
+## Tool versions and pinning strategy
 
-Jede Tool-Version ist als `ARG <TOOL>_VERSION=<x.y.z>` im Dockerfile fest eingebrannt. Build-Args im CI-Workflow überschreiben den Default und stellen sicher, dass Tag-Push und Image-Inhalt deckungsgleich sind.
+Every tool version is hard-baked into the Dockerfile as `ARG <TOOL>_VERSION=<x.y.z>`. Build args set in the CI workflow override the default and ensure that the tag pushed and the image contents agree.
 
 ### Updates
 
-Heute manuell, weil chameleon-ci noch zu klein für Renovate ist. Workflow:
+For now manual, because tcwlab is too small for Renovate. Workflow:
 
-1. Im PR den `ARG <TOOL>_VERSION`-Default bumpen.
-2. Smoke-Test im Build-Job (im Dockerfile letzte Stufe ist eine Smoke-Test-Section).
-3. Conventional-Commits-Message: `feat: bump <tool> to <version>`.
-4. semantic-release erzeugt neue `betterlint`-SemVer, pusht nach `tcwlab/betterlint:<x.y.z>`.
-5. [`chameleon-ci/versions.yaml`](https://git.mon.k8b.co/chameleon-ci/) im Top-Level-Workspace aktualisieren.
+1. In the PR, bump the `ARG <TOOL>_VERSION` default.
+2. Smoke-test in the build job (the Dockerfile's last stage runs a smoke-test block).
+3. Conventional Commits message: `feat: bump <tool> to <version>`.
+4. semantic-release cuts a new `betterlint` SemVer and pushes `tcwlab/betterlint:<x.y.z>`.
+5. Update [`tcwlab/versions.yaml`](https://git.mon.k8b.co/tcwlab/) at the top level of the workspace.
 
-Bei kleinen Tool-Updates (z.B. tflint-Patch): Patch-Bump der `betterlint`-SemVer. Bei Tool-Major-Updates oder neuem Tool: Minor-Bump.
+For small tool updates (e.g. a `tflint` patch): patch-bump the `betterlint` SemVer. For tool major updates or a new tool: minor bump.
 
-### Disziplin
+### Discipline
 
-Niemals `latest` als Source-Pin verwenden. Jede Linter-Binary muss reproduzierbar in einem konkreten Tag landen, sonst ist „CI war grün" wertlos.
-
----
-
-## Release-Verfahren
-
-[`semantic-release`](https://git.mon.k8b.co/chameleon-ci/betterlint/src/branch/main/.releaserc) ist konfiguriert mit:
-
-- `@semantic-release/commit-analyzer` → SemVer-Schritt aus Conventional-Commits ableiten
-- `@semantic-release/release-notes-generator` → Changelog
-- `@saithodev/semantic-release-gitea` → Forgejo-Release + Tag
-- `@semantic-release/git` → Tag/Changelog committen
-
-Tag-Schema: `v<x.y.z>`, Docker-Hub-Tag: `tcwlab/betterlint:<x.y.z>` plus rolling `latest`. Die zwei Tags werden im Publish-Job parallel gepusht (Multi-Arch via Buildx).
-
-Auf `main` ist Branch-Protection aktiv (Status-Check `ci`, Squash-Merge, Branch-Delete-after-Merge). Alle Änderungen über PR von `claude/<slug>`-Branches.
+Never use `latest` as a source pin. Every linter binary must land in a concrete tag reproducibly — otherwise "CI was green" is worthless.
 
 ---
 
-## Was bei Versions-Bump zu tun ist
+## Release procedure
 
-1. **PR auf `claude/bump-<tool>-<version>`**: `ARG <TOOL>_VERSION` ändern.
-2. **Smoke-Tests laufen lassen** — der Smoke-Test-Block im Dockerfile prüft `<tool> --version`. Wenn der lokal/CI durch ist, ist die Binary kompatibel.
-3. **Konsumenten-Pfade prüfen**: in den Templates ([`templates/iac-ci.yml`](https://git.mon.k8b.co/chameleon-ci/templates), [`templates/service-ci.yml`](https://git.mon.k8b.co/chameleon-ci/templates), [`templates/docker-image-ci.yml`](https://git.mon.k8b.co/chameleon-ci/templates)) ist `BETTERLINT_VERSION:` als Default gesetzt. Bei Major-Bump in `betterlint`: Templates separat anheben, damit neue Konsumenten-Repos den neuen Default kriegen.
-4. **Changelog**: durch semantic-release automatisch — aber inhaltlich prüfen, ob die Commit-Message dem User klar macht, was sich geändert hat.
-5. **Konsumenten-Outreach** (bei Breaking Changes): kurze Notiz in `chameleon-ci/CLAUDE.md` ergänzen, falls Konsumenten ihre `BETTERLINT_VERSION`-Werte hochziehen müssen.
+[`semantic-release`](https://git.mon.k8b.co/tcwlab/betterlint/src/branch/main/.releaserc) is configured with:
 
----
+- `@semantic-release/commit-analyzer` → derive the SemVer step from Conventional Commits
+- `@semantic-release/release-notes-generator` → changelog
+- `@saithodev/semantic-release-gitea` → Forgejo release + tag
+- `@semantic-release/git` → commit tag/changelog
 
-## Was explizit NICHT in dieses Image gehört
+Tag scheme: `v<x.y.z>`, Docker Hub tag: `tcwlab/betterlint:<x.y.z>` plus rolling `latest`. The two tags are pushed in parallel by the publish job (multi-arch via Buildx).
 
-- **Sprach-Compiler/Build-Tools** (Java, Go, Rust, Kotlin). `betterlint` ist Linter-Image, kein Build-Image. Build-Tools gehören in repo-eigene Build-Images oder in dedizierte chameleon-ci-Build-Images (z.B. `buildx`).
-- **Vollständige Test-Runner** (junit, gotest, vitest). Tests laufen im Service-Container, nicht im Linter.
-- **Heavy-Weight-Lints** (sonarqube-scanner, snyk-cli, prisma-cli). Wir bleiben bewusst leichtgewichtig.
-- **Sprach-spezifische Code-Style-Linter** (eslint, prettier, ktlint, gofmt, rustfmt). Diese laufen im jeweiligen Repo-Container — `betterlint` macht nur sprachübergreifende Cross-Cutting-Lints.
-- **Application-Security-Scanner** (Trivy, Grype, Snyk). Trivy hat ein eigenes `tcwlab/trivy`-Image — Sicherheitsscan und Lint sind klar getrennte CI-Phasen.
-
-Wenn jemand fragt „kann hier nicht noch X rein?", ist die Default-Antwort **„Nein, baue ein eigenes Image."** Erst wenn drei oder mehr Verticals X im Lint-Job brauchen, wird ein Bump erwogen.
+Branch protection is on for `main` (status check `ci`, squash-merge, branch-delete-after-merge). All changes go through PRs from `claude/<slug>` branches.
 
 ---
 
-## Konsumenten-Snippets
+## What to do on a version bump
 
-### Standard-Lint-Job
+1. **PR on `claude/bump-<tool>-<version>`**: change `ARG <TOOL>_VERSION`.
+2. **Run the smoke tests** — the smoke-test block in the Dockerfile checks `<tool> --version`. If that passes locally / in CI, the binary is compatible.
+3. **Check consumer paths**: in the templates ([`templates/iac-ci.yml`](https://git.mon.k8b.co/tcwlab/templates), [`templates/service-ci.yml`](https://git.mon.k8b.co/tcwlab/templates), [`templates/docker-image-ci.yml`](https://git.mon.k8b.co/tcwlab/templates)) `BETTERLINT_VERSION:` is set as a default. On a major bump in `betterlint`, raise the templates separately so newly bootstrapped consumer repos pick up the new default.
+4. **Changelog**: produced by semantic-release automatically — but verify that the commit message makes the change clear to consumers.
+5. **Consumer outreach** (on breaking changes): add a short note in `tcwlab/CLAUDE.md` if consumers need to bump `BETTERLINT_VERSION`.
+
+---
+
+## What does NOT belong in this image
+
+- **Language compilers / build tools** (Java, Go, Rust, Kotlin). `betterlint` is a linter image, not a build image. Build tools belong in repo-specific build images or dedicated tcwlab build images (e.g. `buildx`).
+- **Full test runners** (junit, gotest, vitest). Tests run in the service container, not in the linter.
+- **Heavy-weight scanners** (sonarqube-scanner, snyk-cli, prisma-cli). We stay deliberately lightweight.
+- **Language-specific style linters** (eslint, prettier, ktlint, gofmt, rustfmt). These run in the language's own container; `betterlint` only does cross-cutting linting.
+- **Application security scanners** (Trivy, Grype, Snyk). Trivy has its own `tcwlab/trivy` image — security scanning and linting are clearly separate CI phases.
+
+When somebody asks "can't we add X here too?", the default answer is **"No, build a dedicated image."** Only when three or more verticals need X in the lint job do we consider a bump.
+
+---
+
+## Consumer snippets
+
+### Standard lint job
 
 ```yaml
 lint:
@@ -130,17 +130,17 @@ lint:
     - run: betterlint --dir .
 ```
 
-### Selektiv (nur bestimmte Linter)
+### Selective (only specific linters)
 
 ```yaml
 - run: betterlint --only hadolint,shellcheck
 - run: betterlint --skip commitlint,spectral
 ```
 
-### Markdown-Output für PR-Kommentar
+### Markdown output for PR comments
 
 ```yaml
-- name: Lint mit Markdown-Report
+- name: Lint with Markdown report
   run: |
     set +e
     betterlint --dir . --markdown 2>&1 | tee /tmp/betterlint-report.md
@@ -148,14 +148,14 @@ lint:
     exit "${LINT_EXIT}"
 ```
 
-Den Report-Inhalt kann ein Folge-Step über die Forgejo-API als PR-Kommentar posten (Pattern existiert in den `chameleon-ci`-eigenen Image-Repos).
+A follow-up step can post the report content as a PR comment via the Forgejo API (the pattern exists in the `tcwlab` image repos themselves).
 
 ---
 
-## Bekannte Schmerzpunkte / offene Themen
+## Known pain points / open topics
 
-- **shellcheck via apk**: Version ist an Alpine 3.23 gekoppelt, nicht eigenständig pinnbar. Wenn ein Konsument eine konkrete shellcheck-Version braucht, muss das Image-Update über einen Alpine-Major-Bump gemacht werden.
-- **gherkin-official via `--break-system-packages`**: ist Alpine-PEP-668-Workaround. Solange wir auf Alpine bleiben und keine venvs in einem Linter-Image verwenden wollen, bleibt das so. Acceptably ugly.
-- **markdownlint-cli2 0.22.1** ist die in TCW konvergierte Version. Höhere Versionen haben Cross-Repo-Drift in `.markdownlint.json`-Schema verursacht — Bump erst nach koordinierter Konsumenten-Migration.
-- **`commitlint`** Major-Updates erfordern oft Anpassung an `.commitlintrc.json` in den Konsumenten-Repos. Bei Major-Bump immer erst die Konsumenten-Tabelle in `chameleon-ci/CLAUDE.md` durchgehen.
-- **Bootstrap-Problem**: betterlint kann sich selbst nicht linten (sonst Henne-Ei). Im eigenen `ci.yml` läuft Lint mit fixer Version-1.0.0-Image, nicht mit dem aktuellen Build-Output.
+- **shellcheck via apk**: the version is tied to Alpine 3.23 and not pinnable independently. If a consumer needs a specific shellcheck version, the image update has to ride on an Alpine major bump.
+- **gherkin-official via `--break-system-packages`**: an Alpine PEP-668 workaround. As long as we stay on Alpine and do not want venvs in a linter image, this stays. Acceptably ugly.
+- **markdownlint-cli2 0.22.1** is the version converged on across TCW. Higher versions caused cross-repo drift in the `.markdownlint.json` schema — bump only after coordinated consumer migration.
+- **`commitlint`** major updates often require adjustments in consumer `.commitlintrc.json` files. On a major bump, walk the consumer table in `tcwlab/CLAUDE.md` first.
+- **Bootstrap problem**: betterlint cannot lint itself (chicken-and-egg). The repo's own `ci.yml` runs the lint job against a fixed `1.0.0` image, not against the current build output.

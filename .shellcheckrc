@@ -1,9 +1,10 @@
-# shellcheck-Konfiguration für betterlint
+# shellcheck configuration for betterlint
 #
 # SC2015: A && B || C is not if-then-else. C may run when A is true.
-#   Alle set_result-Aufrufe geben immer 0 zurück — das Muster ist korrekt.
+#   All set_result calls always return 0 — the pattern is correct here.
 disable=SC2015
 #
 # SC2087: Quote 'HEREDOC' to make here document expansions explicit.
-#   Im Gherkin-Block wird ${FEATURE_FILE} bewusst durch die Shell expandiert.
+#   Inside the gherkin block ${FEATURE_FILE} is intentionally expanded
+#   by the shell.
 disable=SC2087
