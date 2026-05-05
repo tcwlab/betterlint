@@ -220,7 +220,8 @@ docker run --rm -v "$PWD:/workspace" -v "$PWD/my-defaults:/opt/my-defaults" \
 > **Path-agnostic scanning.** The wrapper scans the container's current
 > working directory, not a hardcoded `/workspace`. The image's `WORKDIR`
 > is `/workspace` so naked `docker run` lands there, but any custom mount
-> + `-w` works transparently — `-v "$PWD:/work" -w /work`, `-v "$PWD:/repo" -w /repo`,
+>
+> - `-w` works transparently — `-v "$PWD:/work" -w /work`, `-v "$PWD:/repo" -w /repo`,
 > etc. Use `--dir PATH` (or `BETTERLINT_DIR`) to override explicitly.
 
 ### Detected file patterns

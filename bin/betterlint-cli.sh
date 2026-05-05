@@ -29,12 +29,12 @@ set -euo pipefail
 IMAGE="${BETTERLINT_IMAGE:-tcwlab/betterlint:latest}"
 
 if ! command -v docker &>/dev/null; then
-    echo "betterlint-cli: docker is required but was not found on PATH" >&2
-    exit 127
+	echo "betterlint-cli: docker is required but was not found on PATH" >&2
+	exit 127
 fi
 
 exec docker run --rm \
-    -v "$PWD:/workspace" \
-    -w /workspace \
-    --user "$(id -u):$(id -g)" \
-    "$IMAGE" "$@"
+	-v "$PWD:/workspace" \
+	-w /workspace \
+	--user "$(id -u):$(id -g)" \
+	"$IMAGE" "$@"
