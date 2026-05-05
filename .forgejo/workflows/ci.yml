@@ -74,13 +74,18 @@ jobs:
 
       - name: Smoke test
         run: |
-          docker run --rm "${{ env.IMAGE }}:test" betterlint --version
-          docker run --rm "${{ env.IMAGE }}:test" shellcheck --version
-          docker run --rm "${{ env.IMAGE }}:test" markdownlint-cli2 --version
-          docker run --rm "${{ env.IMAGE }}:test" commitlint --version
-          docker run --rm "${{ env.IMAGE }}:test" spectral --version
-          docker run --rm "${{ env.IMAGE }}:test" \
-            python3 -c "from gherkin.parser import Parser; print('gherkin ok')"
+          # Image's ENTRYPOINT is locked to /usr/local/bin/betterlint
+          # (Dockerfile end). The wrapper itself is verified with the default
+          # entrypoint; every bundled tool is verified by overriding the
+          # entrypoint so we exercise the actual binary path, not the wrapper's
+          # arg parser.
+          docker run --rm "${{ env.IMAGE }}:test" --version
+          docker run --rm --entrypoint shellcheck       "${{ env.IMAGE }}:test" --version
+          docker run --rm --entrypoint markdownlint-cli2 "${{ env.IMAGE }}:test" --version
+          docker run --rm --entrypoint commitlint       "${{ env.IMAGE }}:test" --version
+          docker run --rm --entrypoint spectral         "${{ env.IMAGE }}:test" --version
+          docker run --rm --entrypoint python3          "${{ env.IMAGE }}:test" \
+            -c "from gherkin.parser import Parser; print('gherkin ok')"
 
       - name: Docker Hub login
         run: |
