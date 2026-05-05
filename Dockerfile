@@ -12,6 +12,9 @@
 #   commitlint      Git commit messages
 #   spectral        OpenAPI / AsyncAPI
 #   gherkin         Feature files
+#   prettier        Code/asset formatter — JS/TS/JSON/CSS/HTML (used by --fix)
+#   eslint          JS/TS linter + auto-fixer (used by --fix; ships flat-config default)
+#   yamlfmt         YAML auto-formatter (used by --fix)
 #   jq              JSON processor (validation + filter)
 #   yq              YAML processor (validation + filter)
 #
@@ -53,6 +56,7 @@ FROM base AS release
 ARG BETTERLINT_VERSION=dev
 ARG HADOLINT_VERSION=2.14.0
 ARG TFLINT_VERSION=0.62.0
+ARG YAMLFMT_VERSION=0.13.0
 
 # Pinned SHA256 sums for every binary download. Build fails if a download
 # does not match the recorded checksum — defends against upstream tampering
@@ -63,9 +67,11 @@ ARG HADOLINT_SHA256_AMD64=6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f
 ARG HADOLINT_SHA256_ARM64=331f1d3511b84a4f1e3d18d52fec284723e4019552f4f47b19322a53ce9a40ed
 ARG TFLINT_SHA256_AMD64=000400d7f4c2236d9ed4b35fec3ee95617c3747571593cc6138169fc78cc226a
 ARG TFLINT_SHA256_ARM64=064206ec85adaf90f637c880eb3cd5a8e07ddce09e4da7c813eb362cb794f95f
+ARG YAMLFMT_SHA256_AMD64=043e96d754a8afa4f4c5c13ffb2f3e50c6be5a70bf53292d3025abc0b42fe4ae
+ARG YAMLFMT_SHA256_ARM64=c48d38b5ba1014e2a354b8994963936cf6d6211ec8a0e8fe59da4c542352f71e
 
 LABEL org.opencontainers.image.title="betterlint" \
-      org.opencontainers.image.description="All-in-one linter: hadolint, tflint, shellcheck, shfmt, markdownlint, commitlint, spectral, gherkin, jq, yq" \
+      org.opencontainers.image.description="All-in-one linter + auto-fixer: hadolint, tflint, shellcheck, shfmt, markdownlint, commitlint, spectral, gherkin, prettier, eslint, yamlfmt, jq, yq" \
       org.opencontainers.image.vendor="The Chameleon Way" \
       org.opencontainers.image.url="https://hub.docker.com/r/tcwlab/betterlint" \
       org.opencontainers.image.source="https://github.com/tcwlab/betterlint" \
@@ -73,22 +79,26 @@ LABEL org.opencontainers.image.title="betterlint" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${BETTERLINT_VERSION}"
 
-# hadolint + tflint: arch-aware binary downloads with SHA256 verification.
-# The checksum check (sha256sum -c) aborts the build with a non-zero exit
-# code on any mismatch, so a tampered or unexpectedly-replaced upstream
-# release artifact never lands in the final image.
+# hadolint + tflint + yamlfmt: arch-aware binary downloads with SHA256
+# verification. The checksum check (sha256sum -c) aborts the build with a
+# non-zero exit code on any mismatch, so a tampered or unexpectedly-replaced
+# upstream release artifact never lands in the final image.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN case "$(apk --print-arch)" in \
       aarch64) \
         HADOLINT_ARCH="arm64" ; \
         TFLINT_ARCH="arm64" ; \
+        YAMLFMT_ARCH="arm64" ; \
         HADOLINT_SHA256="${HADOLINT_SHA256_ARM64}" ; \
-        TFLINT_SHA256="${TFLINT_SHA256_ARM64}" ;; \
+        TFLINT_SHA256="${TFLINT_SHA256_ARM64}" ; \
+        YAMLFMT_SHA256="${YAMLFMT_SHA256_ARM64}" ;; \
       x86_64) \
         HADOLINT_ARCH="x86_64" ; \
         TFLINT_ARCH="amd64" ; \
+        YAMLFMT_ARCH="x86_64" ; \
         HADOLINT_SHA256="${HADOLINT_SHA256_AMD64}" ; \
-        TFLINT_SHA256="${TFLINT_SHA256_AMD64}" ;; \
+        TFLINT_SHA256="${TFLINT_SHA256_AMD64}" ; \
+        YAMLFMT_SHA256="${YAMLFMT_SHA256_AMD64}" ;; \
       *) echo "Unsupported architecture: $(apk --print-arch)" && exit 1 ;; \
     esac && \
     curl -fsSL \
@@ -103,15 +113,29 @@ RUN case "$(apk --print-arch)" in \
     unzip -q /tmp/tflint.zip tflint -d /usr/local/bin/ && \
     rm /tmp/tflint.zip && \
     chmod +x /usr/local/bin/tflint && \
+    curl -fsSL \
+      "https://github.com/google/yamlfmt/releases/download/v${YAMLFMT_VERSION}/yamlfmt_${YAMLFMT_VERSION}_Linux_${YAMLFMT_ARCH}.tar.gz" \
+      -o /tmp/yamlfmt.tar.gz && \
+    echo "${YAMLFMT_SHA256}  /tmp/yamlfmt.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/yamlfmt.tar.gz -C /usr/local/bin/ yamlfmt && \
+    rm /tmp/yamlfmt.tar.gz && \
+    chmod +x /usr/local/bin/yamlfmt && \
     hadolint --version && \
-    tflint --version
+    tflint --version && \
+    yamlfmt --version
 
-# Node-based linters (global, version-pinned)
+# Node-based linters and formatters (global, version-pinned where stable).
+# prettier/eslint use caret ranges so consumer-config plugins resolve against
+# a single shared major; the SemVer floor protects against accidental regress.
 RUN npm install --global --no-fund --no-audit \
       markdownlint-cli2@0.22.1 \
       "@commitlint/cli@20" \
       "@commitlint/config-conventional@20" \
       "@stoplight/spectral-cli@6.15.1" \
+      "prettier@^3" \
+      "eslint@^9" \
+      "@eslint/js@^9" \
+      "globals@^15" \
   && npm cache clean --force
 
 # Python-based linters
@@ -147,6 +171,9 @@ RUN hadolint --version \
   && markdownlint-cli2 --version \
   && commitlint --version \
   && spectral --version \
+  && prettier --version \
+  && eslint --version \
+  && yamlfmt --version \
   && python3 -c "from gherkin.parser import Parser; print('gherkin ok')" \
   && jq --version \
   && yq --version \
@@ -154,6 +181,7 @@ RUN hadolint --version \
   && test -f /etc/betterlint/defaults/markdownlint.json \
   && test -f /etc/betterlint/defaults/commitlint.config.cjs \
   && test -f /etc/betterlint/defaults/spectral.yaml \
+  && test -f /etc/betterlint/defaults/eslint.config.js \
   && test -L /etc/betterlint/defaults/node_modules
 
 # Drop privileges. Numeric form so Kubernetes / OpenShift admission

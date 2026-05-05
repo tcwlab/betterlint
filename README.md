@@ -1,6 +1,6 @@
 # tcwlab/betterlint
 
-> Compact multi-linter image for CI pipelines. Bundles every linter that TCW projects actually need (`hadolint`, `tflint`, `shellcheck`, `shfmt`, `markdownlint`, `commitlint`, `spectral`, `gherkin`, plus `jq` and `yq`) into a single Alpine-based image with a smart auto-detect wrapper. Drop-in alternative to MegaLinter when you want a smaller, faster image with sensible defaults.
+> Compact multi-linter image for CI pipelines. Bundles every linter and auto-fixer that TCW projects actually need (`hadolint`, `tflint`, `shellcheck`, `shfmt`, `markdownlint`, `commitlint`, `spectral`, `gherkin`, `prettier`, `eslint`, `yamlfmt`, plus `jq` and `yq`) into a single Alpine-based image with a smart auto-detect wrapper. Drop-in alternative to MegaLinter when you want a smaller, faster image with sensible defaults.
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/tcwlab/betterlint?label=pulls)](https://hub.docker.com/r/tcwlab/betterlint)
 [![Image Size](https://img.shields.io/docker/image-size/tcwlab/betterlint/latest?label=size)](https://hub.docker.com/r/tcwlab/betterlint/tags)
@@ -74,6 +74,9 @@ Every tag is a multi-arch manifest list. Docker pulls the right architecture aut
 | [`@commitlint/config-conventional`](https://commitlint.js.org/reference/configuration.html) | `20.x` | Default commitlint rule set |
 | [`@stoplight/spectral-cli`](https://stoplight.io/open-source/spectral) | `6.15.1` | OpenAPI / AsyncAPI linting |
 | [`gherkin-official`](https://pypi.org/project/gherkin-official/) | `39.0.0` | Gherkin/BDD `.feature` syntax validation |
+| [`prettier`](https://prettier.io/) | `^3` | JS/TS/JSON/CSS/SCSS/HTML formatter (used by `--fix`) |
+| [`eslint`](https://eslint.org/) | `^9` | JS/TS linter + auto-fixer (used by `--fix`; ships flat-config default) |
+| [`yamlfmt`](https://github.com/google/yamlfmt) | `0.13.0` | YAML auto-formatter (used by `--fix`) |
 | `jq` | from Alpine apk | JSON processor (validation + filter) |
 | `yq` | from Alpine apk | YAML processor (validation + filter) |
 | `betterlint` (wrapper) | `1.0.0` | Auto-detect runner (`/usr/local/bin/betterlint`) |
@@ -173,9 +176,11 @@ The five canonical patterns:
 code `2` and a clear error message if both are passed. Unknown linter names
 also fail fast with exit `2` instead of silently doing nothing.
 
-Known linter names (use these exactly with `--only` / `--skip`):
+Known linter / fixer names (use these exactly with `--only` / `--skip`):
 `hadolint`, `tflint`, `shellcheck`, `markdownlint`, `commitlint`, `spectral`,
-`gherkin`.
+`gherkin`, `prettier`, `eslint`, `yamlfmt`. The last three are fix-only and
+only run under `--fix`; in plain lint mode they are silently no-op even when
+listed in `--only`.
 
 The same patterns work via the host wrapper or as direct `docker run`
 arguments (the image's `ENTRYPOINT` forwards everything to the CLI):
@@ -192,15 +197,16 @@ docker run --rm -v "$PWD:/workspace" \
 
 ### Default configs baked into the image
 
-If your repo has no own configuration file for `markdownlint`, `commitlint`, or `spectral`, the wrapper falls back to defaults shipped inside the image at `/etc/betterlint/defaults/`:
+If your repo has no own configuration file for `markdownlint`, `commitlint`, `spectral`, or `eslint`, the wrapper falls back to defaults shipped inside the image at `/etc/betterlint/defaults/`:
 
 | Tool | Default config | Notes |
 |------|----------------|-------|
 | `markdownlint` | `/etc/betterlint/defaults/markdownlint.json` | `MD013` and `MD033` disabled |
 | `commitlint`   | `/etc/betterlint/defaults/commitlint.config.cjs` | Conventional Commits 1.0, header max 100 chars |
 | `spectral`     | `/etc/betterlint/defaults/spectral.yaml` | Activates `spectral:oas` + `spectral:asyncapi` |
+| `eslint`       | `/etc/betterlint/defaults/eslint.config.js` | Flat-config: `@eslint/js` recommended + browser/node/es2024 globals |
 
-A consumer config in the workdir always wins. The wrapper looks for the standard config locations (`.markdownlint*`, `.commitlintrc*`, `commitlint.config.*`, `.spectral.*`) and only falls back to the defaults when none is found.
+A consumer config in the workdir always wins. The wrapper looks for the standard config locations (`.markdownlint*`, `.commitlintrc*`, `commitlint.config.*`, `.spectral.*`, `eslint.config.*`, `.eslintrc*`) and only falls back to the defaults when none is found.
 
 To point the wrapper at a different defaults directory (useful for local tests):
 
@@ -262,11 +268,11 @@ flagged something" still fails the run. Combinable with `--skip` / `--only` /
 
 | Tool | Mode under `--fix` | Notes |
 |------|--------------------|-------|
-| `markdownlint-cli2` | 🛠️ in-place fix (`--fix`) | Bundled in image |
-| `shfmt` | 🛠️ in-place format (`-w`) | Bundled in image; runs against `*.sh` |
-| `prettier` | 🛠️ in-place fix (`--write`) | **Not bundled** — runs only when `prettier` is on PATH |
-| `eslint` | 🛠️ in-place fix (`--fix`) | **Not bundled** — runs only when `eslint` is on PATH |
-| `yamlfmt` | 🛠️ in-place format | **Not bundled** — runs only when `yamlfmt` is on PATH |
+| `markdownlint-cli2` | 🛠️ in-place fix (`--fix`) | Bundled; `*.md` |
+| `shfmt` | 🛠️ in-place format (`-w`) | Bundled; `*.sh` |
+| `prettier` | 🛠️ in-place fix (`--write`) | Bundled; JS/TS/JSON/CSS/SCSS/HTML — **not Markdown or YAML** (handled by markdownlint and yamlfmt respectively, to avoid fix-loops) |
+| `eslint` | 🛠️ in-place fix (`--fix`) | Bundled (v9, flat-config); flat-config default kicks in when the consumer ships no `eslint.config.*` / `.eslintrc*` |
+| `yamlfmt` | 🛠️ in-place format | Bundled; `*.yaml` / `*.yml` |
 | `hadolint` | 📋 report-only | No auto-fix mode upstream |
 | `tflint` | 📋 report-only | No auto-fix mode upstream |
 | `shellcheck` | 📋 report-only | Use `shfmt` for formatting; `shellcheck` reports semantic issues |
@@ -274,10 +280,10 @@ flagged something" still fails the run. Combinable with `--skip` / `--only` /
 | `spectral` | 📋 report-only | No auto-fix mode upstream |
 | `gherkin` | 📋 report-only | Syntax validator, no auto-fix |
 
-Tools marked **Not bundled** are detected at runtime — when missing they
-appear in the report with a `⚠️` marker so users know why no fix was attempted.
-Mount your own toolchain into the container (or run `--fix` outside the
-container against the same workdir) to enable them.
+All `--fix` tools are bundled in the image — no host-side toolchain mounting
+required. The previous "not bundled, detect-and-skip" behavior for
+`prettier` / `eslint` / `yamlfmt` has been replaced by full coverage; they
+only show as `⚠️` if the binary is somehow missing from a custom build.
 
 > **File ownership when using `--fix`:** files patched inside the container are
 > owned by whoever the container ran as. The README's [`Install as
@@ -415,7 +421,7 @@ To report a security issue, open an [issue](https://github.com/tcwlab/betterlint
 
 ## Why `betterlint` and not MegaLinter?
 
-[MegaLinter](https://github.com/oxsecurity/megalinter) is excellent and supports far more languages, but it ships in a >1 GB image with linters that TCW projects do not use. `betterlint` keeps the image around 300 MB by including only the linters that actually run in our pipelines, with deterministic auto-detect logic in a small Bash wrapper. Trade-off accepted: less coverage out of the box, faster pipelines and fewer moving parts.
+[MegaLinter](https://github.com/oxsecurity/megalinter) is excellent and supports far more languages, but it ships in a >1 GB image with linters that TCW projects do not use. `betterlint` keeps the image well below half a gigabyte by including only the linters and fixers that actually run in our pipelines, with deterministic auto-detect logic in a small Bash wrapper. Trade-off accepted: less coverage out of the box, faster pipelines and fewer moving parts.
 
 If you need a linter that is not in this image, please open a [feature request](https://github.com/tcwlab/betterlint/issues) — once three or more consumers need the same tool, we evaluate adding it. Otherwise the recommendation is to run that linter in its own dedicated image.
 
