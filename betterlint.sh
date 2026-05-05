@@ -16,12 +16,15 @@
 #   gherkin       .feature files
 #
 # Auto-fix mode (--fix): runs auto-correctable formatters first, then the
-# regular lint phase. Active fixers (when their binary is on PATH):
+# regular lint phase. All fixers below are bundled in the image:
 #   markdownlint-cli2 --fix    Markdown
 #   shfmt -w                   Bash / sh
-#   prettier --write           CSS/JS/TS/JSON   (optional, detect-and-skip)
-#   eslint --fix               JS/TS            (optional, detect-and-skip)
-#   yamlfmt                    YAML             (optional, detect-and-skip)
+#   prettier --write           JS/TS/JSON/CSS/SCSS/HTML
+#                              (Markdown is left to markdownlint to avoid
+#                              fix-loop conflicts; YAML is left to yamlfmt.)
+#   eslint --fix               JS/TS (flat-config; baked-in default if the
+#                              consumer repo ships no own config)
+#   yamlfmt                    YAML
 #
 # Usage:
 #   betterlint [--skip TOOL,...] [--only TOOL,...] [--dir PATH] [--fix] [--markdown]
@@ -47,9 +50,12 @@ ONLY="${BETTERLINT_ONLY:-}"
 OUTPUT_MODE="text"
 FIX_MODE="${BETTERLINT_FIX:-0}"
 
-# Canonical set of linter names. Used for input validation in --only / --skip.
-# Order here also drives the report rendering.
-KNOWN_TOOLS=(hadolint tflint shellcheck markdownlint commitlint spectral gherkin)
+# Canonical set of linter / fixer names. Used for input validation in
+# --only / --skip. The first seven are full lint tools (run in the lint
+# phase + may also run in the fix phase); prettier/eslint/yamlfmt are
+# fix-only — they only run when --fix is set, but they participate in the
+# allow-/deny-list so users can do e.g. `--fix --skip eslint`.
+KNOWN_TOOLS=(hadolint tflint shellcheck markdownlint commitlint spectral gherkin prettier eslint yamlfmt)
 
 # Back-compat shim: with ENTRYPOINT ["/usr/local/bin/betterlint"], invocations
 # like `docker run tcwlab/betterlint:1.0.0 betterlint --foo` would forward an
@@ -134,13 +140,17 @@ Available tools (use these exact names with --only / --skip):
   commitlint    Git commit messages (Conv. Commits)    [report-only]
   spectral      OpenAPI / AsyncAPI                     [report-only]
   gherkin       Gherkin feature files (.feature)      [report-only]
+  prettier      JS/TS/JSON/CSS/SCSS/HTML formatter     [fix-only, --fix]
+  eslint        JS/TS linter + auto-fixer              [fix-only, --fix]
+  yamlfmt       YAML auto-formatter                    [fix-only, --fix]
 
-Auto-fix tools (active only with --fix):
+Auto-fix tools (active only with --fix; all bundled in the image):
   markdownlint-cli2 --fix    in-place fix of *.md
-  shfmt -w                   in-place format of *.sh (if shfmt installed)
-  prettier --write           CSS/JS/TS/JSON (only if prettier on PATH)
-  eslint --fix               JS/TS (only if eslint on PATH)
-  yamlfmt                    YAML (only if yamlfmt on PATH)
+  shfmt -w                   in-place format of *.sh
+  prettier --write           JS/TS/JSON/CSS/SCSS/HTML
+                             (Markdown left to markdownlint, YAML to yamlfmt)
+  eslint --fix               JS/TS (flat-config default if consumer has none)
+  yamlfmt                    YAML
 
   Tools without auto-fix support (hadolint, tflint, shellcheck, commitlint,
   spectral, gherkin) still run in --fix mode as plain linters and report
@@ -149,8 +159,8 @@ Auto-fix tools (active only with --fix):
 Default configs:
   When the consumer repo ships no own configuration, betterlint falls
   back to the defaults baked into the image at /etc/betterlint/defaults/.
-  Affected tools: markdownlint, commitlint, spectral. Existing consumer
-  configs always win.
+  Affected tools: markdownlint, commitlint, spectral, eslint. Existing
+  consumer configs always win.
 
 Selective invocation (the five common patterns):
   Run a single linter:        betterlint --only markdownlint
@@ -321,16 +331,24 @@ if [[ "$FIX_MODE" == "1" ]]; then
 		fi
 	fi
 
-	# --- prettier --write (CSS/JS/TS/JSON) — optional, detect-and-skip ---
+	# --- prettier --write (JS/TS/JSON + CSS/SCSS + HTML) ---
+	# Bundled in the image. Markdown and YAML are deliberately excluded:
+	# markdownlint owns Markdown formatting (running both creates fix-loops
+	# on heading/list whitespace), and yamlfmt owns YAML.
 	if is_enabled prettier; then
 		mapfile -t PRETTIER_FILES_FIX < <(find . \
-			\( -name "*.css" -o -name "*.scss" -o -name "*.js" -o -name "*.jsx" \
-			-o -name "*.ts" -o -name "*.tsx" -o -name "*.json" \) \
+			\( -name "*.js" -o -name "*.jsx" -o -name "*.mjs" -o -name "*.cjs" \
+			-o -name "*.ts" -o -name "*.tsx" \
+			-o -name "*.json" \
+			-o -name "*.css" -o -name "*.scss" \
+			-o -name "*.html" -o -name "*.htm" \) \
 			! -path "./.git/*" ! -path "./node_modules/*" 2>/dev/null || true)
 		if [[ ${#PRETTIER_FILES_FIX[@]} -eq 0 ]]; then
 			set_fix_result prettier skip "no Prettier-eligible files found"
 		elif ! command -v prettier &>/dev/null; then
-			set_fix_result prettier unavailable "prettier not on PATH (not bundled in betterlint)"
+			# Should never trigger in the official image; kept as a safety
+			# net for local runs against a stripped-down environment.
+			set_fix_result prettier unavailable "prettier not on PATH"
 		else
 			if out=$(prettier --write "${PRETTIER_FILES_FIX[@]}" 2>&1); then
 				set_fix_result prettier ok "$out"
@@ -340,24 +358,42 @@ if [[ "$FIX_MODE" == "1" ]]; then
 		fi
 	fi
 
-	# --- eslint --fix (JS/TS) — optional, detect-and-skip ---
+	# --- eslint --fix (JS/TS) ---
+	# Bundled in the image. Falls back to the flat-config default at
+	# ${DEFAULTS_DIR}/eslint.config.js when the consumer repo ships no
+	# own config — same fallback pattern as markdownlint/commitlint/spectral.
 	if is_enabled eslint; then
 		mapfile -t ESLINT_FILES_FIX < <(find . \
-			\( -name "*.js" -o -name "*.jsx" -o -name "*.ts" -o -name "*.tsx" \) \
+			\( -name "*.js" -o -name "*.jsx" -o -name "*.mjs" -o -name "*.cjs" \
+			-o -name "*.ts" -o -name "*.tsx" \) \
 			! -path "./.git/*" ! -path "./node_modules/*" 2>/dev/null || true)
 		if [[ ${#ESLINT_FILES_FIX[@]} -eq 0 ]]; then
 			set_fix_result eslint skip "no JS/TS files found"
 		elif ! command -v eslint &>/dev/null; then
-			set_fix_result eslint unavailable "eslint not on PATH (not bundled in betterlint)"
+			set_fix_result eslint unavailable "eslint not on PATH"
 		else
+			# Look for a consumer flat-config / legacy-config file. eslint v9
+			# discovers these names automatically; we only point --config at
+			# the baked-in default when none is found.
+			eslint_cfg=(--config "${DEFAULTS_DIR}/eslint.config.js")
+			for _cfg in eslint.config.js eslint.config.mjs eslint.config.cjs eslint.config.ts \
+				.eslintrc.js .eslintrc.cjs .eslintrc.yaml .eslintrc.yml .eslintrc.json .eslintrc; do
+				if [[ -f "$_cfg" ]]; then
+					eslint_cfg=()
+					break
+				fi
+			done
 			# eslint exits non-zero on remaining lint errors; capture but don't fail
 			# the fix phase on it — the lint phase below will surface them again.
-			out=$(eslint --fix "${ESLINT_FILES_FIX[@]}" 2>&1 || true)
+			out=$(eslint --fix "${eslint_cfg[@]}" "${ESLINT_FILES_FIX[@]}" 2>&1 || true)
 			set_fix_result eslint ok "${out:-no remaining issues}"
 		fi
 	fi
 
-	# --- yamlfmt (YAML) — optional, detect-and-skip ---
+	# --- yamlfmt (YAML) ---
+	# Bundled in the image. Default settings — yamlfmt picks up a consumer
+	# `.yamlfmt` / `yamlfmt.yml` automatically when present, so no explicit
+	# --config plumbing here.
 	if is_enabled yamlfmt; then
 		mapfile -t YAML_FILES_FIX < <(find . \
 			\( -name "*.yaml" -o -name "*.yml" \) \
@@ -365,7 +401,7 @@ if [[ "$FIX_MODE" == "1" ]]; then
 		if [[ ${#YAML_FILES_FIX[@]} -eq 0 ]]; then
 			set_fix_result yamlfmt skip "no YAML files found"
 		elif ! command -v yamlfmt &>/dev/null; then
-			set_fix_result yamlfmt unavailable "yamlfmt not on PATH (not bundled in betterlint)"
+			set_fix_result yamlfmt unavailable "yamlfmt not on PATH"
 		else
 			if out=$(yamlfmt "${YAML_FILES_FIX[@]}" 2>&1); then
 				set_fix_result yamlfmt ok "$out"
