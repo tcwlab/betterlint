@@ -87,6 +87,38 @@ jobs:
           docker run --rm --entrypoint python3          "${{ env.IMAGE }}:test" \
             -c "from gherkin.parser import Parser; print('gherkin ok')"
 
+      - name: Hardened runtime smoke-test
+        run: |
+          # Verify the image still works under the runtime restrictions we
+          # recommend in the README. If any of these flags break the wrapper,
+          # the README is lying to consumers.
+          #   --read-only           : root FS is mounted read-only
+          #   --tmpfs /tmp          : writable scratch for tools that need it
+          #   --cap-drop=ALL        : drop every Linux capability
+          #   --security-opt        : block privilege escalation via setuid
+          #   --user 10001:10001    : matches the Dockerfile's USER directive
+          docker run --rm \
+            --read-only \
+            --tmpfs /tmp \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --user 10001:10001 \
+            "${{ env.IMAGE }}:test" --version
+
+      - name: ENTRYPOINT lockdown verification
+        run: |
+          # The Dockerfile locks ENTRYPOINT to /usr/local/bin/betterlint so
+          # `docker run <image> /bin/sh -c true` MUST fail (the shell becomes
+          # an arg to the wrapper, not the entrypoint). If this run somehow
+          # succeeds, the lockdown was bypassed (e.g. someone reverted the
+          # ENTRYPOINT line) and the README is making promises the image
+          # cannot keep.
+          if docker run --rm "${{ env.IMAGE }}:test" /bin/sh -c true 2>/dev/null; then
+            echo "FAIL: shell reachable via image — ENTRYPOINT lockdown not enforced"
+            exit 1
+          fi
+          echo "OK: shell not reachable, ENTRYPOINT lockdown enforced"
+
       - name: Docker Hub login
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" \
@@ -97,6 +129,26 @@ jobs:
           TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
           docker tag "${{ env.IMAGE }}:test" "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
           docker push "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
+
+      - name: Trivy gate (fixable HIGH/CRITICAL → fail build)
+        run: |
+          # Two-pass Trivy strategy:
+          #   1. THIS step is the HARD gate: any HIGH/CRITICAL CVE with an
+          #      available upstream fix fails the build immediately
+          #      (--ignore-unfixed). The downstream `security` and `publish`
+          #      jobs depend on `build-test` and therefore never run on a
+          #      gated failure.
+          #   2. The `security` job below runs a non-gating full scan
+          #      (--exit-code 0) and posts the result as a PR comment so
+          #      unfixable CVEs are still visible to maintainers.
+          TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
+          docker run --rm \
+            -e TRIVY_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}" \
+            -e TRIVY_PASSWORD="${{ secrets.DOCKERHUB_TOKEN }}" \
+            tcwlab/trivy:0.70.0 image \
+            --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+            --no-progress \
+            "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
 
   # ---------------------------------------------------------------------------
   security:
