@@ -1,0 +1,25 @@
+# .trivyignore — yamlfmt 0.13.0 → 0.21.0 reicht nicht ganz aus.
+# Gilt für Findings, die in yamlfmt's CLI-Use-Case nicht reachable
+# sind (kein net/http-Server, keine TLS-Termination, kein ASN.1).
+# Verfall = wenn yamlfmt einen Release mit Go ≥1.26.2 cuttet.
+# Re-Check-Trigger: https://github.com/google/yamlfmt/releases
+#
+# `exp:YYYY-MM-DD` ist KEIN Trivy-Built-in — Konvention für
+# Menschen-Reviewer. Trivy ignoriert Zeilenkommentare.
+
+# Go stdlib bug, fixed in Go 1.24.13/1.25.7/1.26.0
+CVE-2025-68121 exp:2026-08-01
+
+# Go stdlib bug, fixed in Go 1.24.12/1.25.6
+CVE-2025-61726 exp:2026-08-01
+
+# Go stdlib bug, fixed in Go 1.24.12/1.25.6
+CVE-2025-61728 exp:2026-08-01
+
+# Go stdlib bug, fixed in Go 1.25.8/1.26.1
+CVE-2026-25679 exp:2026-08-01
+
+# Go stdlib bug, fixed in Go 1.25.9/1.26.2
+CVE-2026-32280 exp:2026-08-01
+CVE-2026-32281 exp:2026-08-01
+CVE-2026-32283 exp:2026-08-01

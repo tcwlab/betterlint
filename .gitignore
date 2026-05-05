@@ -13,3 +13,5 @@ node_modules/
 .idea/
 .vscode/
 *.swp
+PUSH-BETTERLINT.sh
+CVE-AUDIT-*.md

@@ -19,18 +19,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: release
-
 on:
   push:
     branches: [main]
   workflow_dispatch:
-
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
-
 jobs:
-
   release:
     name: Semantic Release
     runs-on: ubuntu-22.04
@@ -41,13 +37,11 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.FORGEJO_TOKEN }}
-
       - name: Remember tag before release
         id: before
         run: |
           TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-
       - name: Run semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
@@ -65,13 +59,11 @@ jobs:
             "@saithodev/semantic-release-gitea@2" \
             "@semantic-release/git@10"
           npx semantic-release
-
       - name: Detect new tag
         id: after
         run: |
           TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-
       - name: Trigger publish job via workflow_dispatch
         if: steps.after.outputs.tag != steps.before.outputs.tag && steps.after.outputs.tag != ''
         env:

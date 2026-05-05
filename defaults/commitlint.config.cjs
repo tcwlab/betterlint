@@ -9,11 +9,11 @@
 // so that `@commitlint/config-conventional` (npm-global-installed) resolves
 // from this location without further hints.
 module.exports = {
-  extends: ['@commitlint/config-conventional'],
+  extends: ["@commitlint/config-conventional"],
   rules: {
-    'subject-case': [0],
-    'header-max-length': [2, 'always', 100],
-    'body-max-line-length': [0],
-    'footer-max-line-length': [0],
+    "subject-case": [0],
+    "header-max-length": [2, "always", 100],
+    "body-max-line-length": [0],
+    "footer-max-line-length": [0],
   },
 };

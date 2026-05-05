@@ -32,7 +32,6 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: ci
-
 on:
   push:
     branches: [main, "feature/*", "claude/*"]
@@ -40,17 +39,13 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
-
 env:
   IMAGE: tcwlab/betterlint
   DOCKER_BUILDKIT: "1"
-
 jobs:
-
   # ---------------------------------------------------------------------------
   build-test:
     name: Build & Smoke Test (amd64)
@@ -70,13 +65,11 @@ jobs:
             "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout FETCH_HEAD
-
       - name: Build (amd64)
         run: |
           docker build \
             --build-arg BETTERLINT_VERSION=dev \
             -t "${{ env.IMAGE }}:test" .
-
       - name: Smoke test
         run: |
           # Image's ENTRYPOINT is locked to /usr/local/bin/betterlint
@@ -91,7 +84,6 @@ jobs:
           docker run --rm --entrypoint spectral         "${{ env.IMAGE }}:test" --version
           docker run --rm --entrypoint python3          "${{ env.IMAGE }}:test" \
             -c "from gherkin.parser import Parser; print('gherkin ok')"
-
       - name: Hardened runtime smoke-test
         run: |
           # Verify the image still works under the runtime restrictions we
@@ -109,7 +101,6 @@ jobs:
             --security-opt=no-new-privileges \
             --user 10001:10001 \
             "${{ env.IMAGE }}:test" --version
-
       - name: ENTRYPOINT lockdown verification
         run: |
           # The Dockerfile locks ENTRYPOINT to /usr/local/bin/betterlint so
@@ -123,12 +114,10 @@ jobs:
             exit 1
           fi
           echo "OK: shell not reachable, ENTRYPOINT lockdown enforced"
-
       - name: Docker Hub login
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" \
             | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
       - name: Push to staging
         run: |
           TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
@@ -138,7 +127,6 @@ jobs:
           # findings are surfaced as a PR comment (or step summary on push).
           # This keeps build-test focused on build + smoke tests and lets a
           # human triage CVEs per case rather than the build hard-failing.
-
   # ---------------------------------------------------------------------------
   security:
     name: Trivy security scan
@@ -152,7 +140,6 @@ jobs:
           curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-29.4.2.tgz" \
             -o /tmp/docker.tgz
           tar xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin docker/docker
-
       - name: Trivy scan (JSON)
         run: |
           TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
@@ -164,7 +151,6 @@ jobs:
             --format json \
             "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}" \
             > /tmp/trivy-report.json
-
       - name: Render Trivy report (Markdown)
         env:
           SCANNED_IMAGE: "tcwlab/forgejo-build:betterlint-${{ github.sha }}"
@@ -218,7 +204,6 @@ jobs:
           with open("/tmp/trivy-report.md", "w") as f:
               f.write(f"{body}\n\n{footer}\n")
           EOF
-
       - name: Post Trivy result as PR comment
         if: github.event_name == 'pull_request'
         env:
@@ -298,7 +283,6 @@ jobs:
               status = post(f"{api}/repos/{repo}/issues/{pr_number}/comments", {"body": comment})
               print(f"PR #{pr_number}: Trivy comment created (HTTP {status})")
           EOF
-
       - name: Trivy report — job summary (non-PR events)
         if: github.event_name != 'pull_request'
         run: |
@@ -312,7 +296,6 @@ jobs:
           else
             echo "No /tmp/trivy-report.md or \$GITHUB_STEP_SUMMARY unset — nothing to do"
           fi
-
   # ---------------------------------------------------------------------------
   betterlint-check:
     name: Betterlint self-check
@@ -336,14 +319,12 @@ jobs:
             "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout FETCH_HEAD
-
       - name: Run betterlint
         run: |
           set +e
           betterlint --dir . --markdown 2>&1 | tee /tmp/betterlint-report.md
           LINT_EXIT="${PIPESTATUS[0]}"
           exit "${LINT_EXIT}"
-
       - name: Post betterlint result as PR comment
         if: always()
         env:
@@ -440,7 +421,6 @@ jobs:
               status = post(f"{api}/repos/{repo}/issues/{pr_number}/comments", {"body": comment})
               print(f"PR #{pr_number}: betterlint comment created (HTTP {status})")
           EOF
-
   # ---------------------------------------------------------------------------
   publish:
     name: Publish to Docker Hub (linux/amd64 + linux/arm64)
@@ -462,7 +442,6 @@ jobs:
             "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout FETCH_HEAD
-
       - name: Extract version from tag
         id: version
         run: |
@@ -472,20 +451,16 @@ jobs:
           echo "version=${VER}"   >> "$GITHUB_OUTPUT"
           echo "major=${MAJOR}"   >> "$GITHUB_OUTPUT"
           echo "minor=${MINOR}"   >> "$GITHUB_OUTPUT"
-
       - name: Set up QEMU (arm64 emulation)
         run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-
       - name: Set up Buildx builder
         run: |
           docker buildx create --name multiarch --driver docker-container --use
           docker buildx inspect --bootstrap
-
       - name: Docker Hub login
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" \
             | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
       - name: Build & push (multi-arch)
         run: |
           VER="${{ steps.version.outputs.version }}"
@@ -502,7 +477,6 @@ jobs:
             -t "${{ env.IMAGE }}:latest" \
             --push \
             .
-
   # ---------------------------------------------------------------------------
   sync-readme:
     name: Sync README to Docker Hub
@@ -522,7 +496,6 @@ jobs:
             "https://oauth2:${GITHUB_TOKEN}@git.mon.k8b.co/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout FETCH_HEAD
-
       - name: Push README to Docker Hub
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}

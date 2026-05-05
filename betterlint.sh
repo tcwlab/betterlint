@@ -278,7 +278,15 @@ FIX_FAIL=false
 set_fix_result() {
 	local name="$1" status="$2" detail="${3:-}"
 	FIX_STATUS[$name]="$status"
-	FIX_DETAIL[$name]="${detail:0:400}"
+	# 4000-char cap (was 400) — typical multi-file error blocks (e.g.
+	# prettier reading half a dozen files) easily exceed the older
+	# limit and got truncated mid-message. Still bounded so a runaway
+	# log doesn't blow up the per-tool detail block.
+	FIX_DETAIL[$name]="${detail:0:4000}"
+	# `warn` is intentionally NOT treated as a failure — it surfaces
+	# partial successes (e.g. transient virtiofs/EAGAIN read errors on
+	# a single file) without blocking CI. The lint phase below still
+	# decides the overall exit code.
 	if [[ "$status" == "fail" ]]; then FIX_FAIL=true; fi
 }
 
@@ -304,9 +312,12 @@ if [[ "$FIX_MODE" == "1" ]]; then
 			done
 			# markdownlint-cli2 --fix exits non-zero when issues remain after fixing;
 			# that's expected and we don't treat the fix phase as failed for that.
-			out=$(markdownlint-cli2 --fix "${markdownlint_cfg[@]}" \
-				"**/*.md" "#node_modules" "#.git" 2>&1 || true)
-			set_fix_result markdownlint-fix ok "${out:-no remaining issues}"
+			# The output is a remaining-issues report, not a status summary, so we
+			# don't surface it here — the lint phase below will rerun markdownlint
+			# proper and report what's left.
+			markdownlint-cli2 --fix "${markdownlint_cfg[@]}" \
+				"**/*.md" "#node_modules" "#.git" >/dev/null 2>&1 || true
+			set_fix_result markdownlint-fix ok ""
 		fi
 	fi
 
@@ -319,15 +330,30 @@ if [[ "$FIX_MODE" == "1" ]]; then
 		elif ! command -v shfmt &>/dev/null; then
 			set_fix_result shfmt unavailable "shfmt not on PATH (install via 'apk add shfmt')"
 		else
+			# Same per-file resilience as the prettier block: shfmt iterates
+			# file-by-file, so a single transient I/O error (virtiofs EAGAIN,
+			# concurrent editor write, etc.) can fail one file while every
+			# other file gets formatted cleanly. Grade ok / warn / fail.
 			out=""
-			ok=true
+			ok_count=0
+			err_count=0
 			for f in "${SH_FILES_FIX[@]}"; do
-				r=$(shfmt -w "$f" 2>&1) || {
+				if r=$(shfmt -w "$f" 2>&1); then
+					ok_count=$((ok_count + 1))
+				else
 					out+="$f: $r"$'\n'
-					ok=false
-				}
+					err_count=$((err_count + 1))
+				fi
 			done
-			if $ok; then set_fix_result shfmt ok; else set_fix_result shfmt fail "$out"; fi
+			if [[ "$err_count" -eq 0 ]]; then
+				set_fix_result shfmt ok "${ok_count} file(s) processed"
+			elif [[ "$ok_count" -gt 0 ]]; then
+				set_fix_result shfmt warn "${ok_count} processed, ${err_count} error(s)
+${out}"
+			else
+				set_fix_result shfmt fail "${err_count} error(s)
+${out}"
+			fi
 		fi
 	fi
 
@@ -335,6 +361,11 @@ if [[ "$FIX_MODE" == "1" ]]; then
 	# Bundled in the image. Markdown and YAML are deliberately excluded:
 	# markdownlint owns Markdown formatting (running both creates fix-loops
 	# on heading/list whitespace), and yamlfmt owns YAML.
+	#
+	# eslint config files are also excluded — they are eslint's own DSL with
+	# a deliberate format and not appropriate for prettier reformatting.
+	# Repos with their own .prettierignore can re-include them; this just
+	# changes the default behaviour when no consumer ignore-file is present.
 	if is_enabled prettier; then
 		mapfile -t PRETTIER_FILES_FIX < <(find . \
 			\( -name "*.js" -o -name "*.jsx" -o -name "*.mjs" -o -name "*.cjs" \
@@ -342,7 +373,14 @@ if [[ "$FIX_MODE" == "1" ]]; then
 			-o -name "*.json" \
 			-o -name "*.css" -o -name "*.scss" \
 			-o -name "*.html" -o -name "*.htm" \) \
-			! -path "./.git/*" ! -path "./node_modules/*" 2>/dev/null || true)
+			! -path "./.git/*" ! -path "./node_modules/*" \
+			! -name "eslint.config.js" \
+			! -name "eslint.config.mjs" \
+			! -name "eslint.config.cjs" \
+			! -name "eslint.config.ts" \
+			! -name ".eslintrc.js" \
+			! -name ".eslintrc.cjs" \
+			2>/dev/null || true)
 		if [[ ${#PRETTIER_FILES_FIX[@]} -eq 0 ]]; then
 			set_fix_result prettier skip "no Prettier-eligible files found"
 		elif ! command -v prettier &>/dev/null; then
@@ -350,11 +388,47 @@ if [[ "$FIX_MODE" == "1" ]]; then
 			# net for local runs against a stripped-down environment.
 			set_fix_result prettier unavailable "prettier not on PATH"
 		else
-			if out=$(prettier --write "${PRETTIER_FILES_FIX[@]}" 2>&1); then
-				set_fix_result prettier ok "$out"
+			# Per-file resilience: prettier exits non-zero if ANY single file
+			# fails — even a transient virtiofs/Docker-Desktop EAGAIN read
+			# error (`Unknown system error -35`) makes the whole step look
+			# FAILED while most files were fixed cleanly. We capture stderr,
+			# count the result classes, and grade the step accordingly:
+			#   - all clean        → ok
+			#   - some errors      → warn (don't block CI on transient I/O)
+			#   - everything errored → fail
+			# The detail block below shows only the [error] lines (no
+			# `(unchanged)` noise) plus an EAGAIN hint added by the
+			# detail-renderer for prettier specifically.
+			prettier_log=$(mktemp)
+			prettier --write "${PRETTIER_FILES_FIX[@]}" \
+				>"$prettier_log" 2>&1 || true
+			# Lines like `path/to/file 60ms` end with `<n>ms`; unchanged
+			# files end with `(unchanged)`. So `' [0-9]+ms$'` counts only
+			# files prettier actually rewrote.
+			fixed=$(grep -cE ' [0-9]+ms$' "$prettier_log" 2>/dev/null || true)
+			# Count distinct file-level errors (entry-point lines), not all
+			# `[error]` lines — multi-line error messages emit continuation
+			# lines that share the `[error]` prefix.
+			file_errors=$(grep -cE '^\[error\] (Unable|Failed|Cannot)' "$prettier_log" 2>/dev/null || true)
+			: "${fixed:=0}"
+			: "${file_errors:=0}"
+			if [[ "$file_errors" -eq 0 ]]; then
+				if [[ "$fixed" -gt 0 ]]; then
+					set_fix_result prettier ok "${fixed} file(s) fixed"
+				else
+					set_fix_result prettier ok "no changes needed"
+				fi
 			else
-				set_fix_result prettier fail "$out"
+				err_lines=$(grep -E '^\[error\]' "$prettier_log" 2>/dev/null || true)
+				if [[ "$fixed" -gt 0 ]]; then
+					set_fix_result prettier warn "${fixed} file(s) fixed, ${file_errors} read error(s)
+${err_lines}"
+				else
+					set_fix_result prettier fail "${file_errors} read error(s), no files fixed
+${err_lines}"
+				fi
 			fi
+			rm -f "$prettier_log"
 		fi
 	fi
 
@@ -385,8 +459,8 @@ if [[ "$FIX_MODE" == "1" ]]; then
 			done
 			# eslint exits non-zero on remaining lint errors; capture but don't fail
 			# the fix phase on it — the lint phase below will surface them again.
-			out=$(eslint --fix "${eslint_cfg[@]}" "${ESLINT_FILES_FIX[@]}" 2>&1 || true)
-			set_fix_result eslint ok "${out:-no remaining issues}"
+			eslint --fix "${eslint_cfg[@]}" "${ESLINT_FILES_FIX[@]}" >/dev/null 2>&1 || true
+			set_fix_result eslint ok ""
 		fi
 	fi
 
@@ -404,7 +478,7 @@ if [[ "$FIX_MODE" == "1" ]]; then
 			set_fix_result yamlfmt unavailable "yamlfmt not on PATH"
 		else
 			if out=$(yamlfmt "${YAML_FILES_FIX[@]}" 2>&1); then
-				set_fix_result yamlfmt ok "$out"
+				set_fix_result yamlfmt ok ""
 			else
 				set_fix_result yamlfmt fail "$out"
 			fi
@@ -618,6 +692,7 @@ if [[ "$OUTPUT_MODE" == "markdown" ]]; then
 			d=$(printf '%s' "$d" | sed 's/\x1b\[[0-9;]*m//g')
 			case "$s" in
 			ok) echo "| \`$t\` | 🛠️ fixed | ${d:0:200} |" ;;
+			warn) echo "| \`$t\` | ⚠️ partial | \`${d:0:200}\` |" ;;
 			fail) echo "| \`$t\` | ❌ | \`${d:0:200}\` |" ;;
 			skip) echo "| \`$t\` | ⏭️ | $d |" ;;
 			unavailable) echo "| \`$t\` | ⚠️ | $d |" ;;
@@ -650,9 +725,15 @@ else
 		echo "── Auto-fix phase ──"
 		for t in "${FIXERS[@]}"; do
 			s="${FIX_STATUS[$t]:-skip}"
+			# First line of FIX_DETAIL is the per-step summary; any
+			# remaining lines belong to the per-tool detail block
+			# printed further below.
+			summary="${FIX_DETAIL[$t]:-}"
+			summary="${summary%%$'\n'*}"
 			case "$s" in
-			ok) printf "  🛠️  %-18s  fixed in-place\n" "$t" ;;
-			fail) printf "  ❌  %-18s  FAILED\n" "$t" ;;
+			ok) printf "  🛠️  %-18s  %s\n" "$t" "${summary:-fixed in-place}" ;;
+			warn) printf "  ⚠️  %-18s  %s\n" "$t" "${summary:-partial}" ;;
+			fail) printf "  ❌  %-18s  %s\n" "$t" "${summary:-FAILED}" ;;
 			skip) printf "  ⏭️   %-18s  (%s)\n" "$t" "${FIX_DETAIL[$t]:-}" ;;
 			unavailable) printf "  ⚠️   %-18s  (%s)\n" "$t" "${FIX_DETAIL[$t]:-}" ;;
 			esac
@@ -669,11 +750,31 @@ else
 		esac
 	done
 
-	# Print error details (fix phase first, then lint phase)
+	# Print error details (fix phase first, then lint phase). `warn` is
+	# included alongside `fail` so partial-success steps (e.g. prettier
+	# fixed 8 files but hit one transient virtiofs read error) actually
+	# show what went wrong — without that, the summary line is the only
+	# place the failure surfaces.
 	if [[ "$FIX_MODE" == "1" ]]; then
 		for t in "${FIXERS[@]}"; do
-			if [[ "${FIX_STATUS[$t]:-}" == "fail" ]]; then
+			s="${FIX_STATUS[$t]:-}"
+			if [[ "$s" == "fail" || "$s" == "warn" ]]; then
 				printf "\n── fix: %s ──\n%s\n" "$t" "${FIX_DETAIL[$t]}"
+				# Tool-specific hint: prettier read errors with `system
+				# error -35` on virtiofs/Docker-Desktop mounts are EAGAIN
+				# flukes that usually disappear on a re-run. Surface that
+				# specifically — but only when we actually see -35,
+				# otherwise the hint would mislead users hitting EACCES,
+				# ENOENT, or other deterministic problems.
+				if [[ "$t" == "prettier" && "${FIX_DETAIL[$t]}" == *"system error -35"* ]]; then
+					cat <<'NOTE'
+
+Note: 'Unknown system error -35' is EAGAIN — usually a transient
+virtiofs/Docker-Desktop file-mount glitch. Re-run --fix; if it
+persists on the same file, check filesystem locks (other process
+modifying the file).
+NOTE
+				fi
 			fi
 		done
 	fi

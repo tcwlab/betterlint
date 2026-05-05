@@ -56,7 +56,7 @@ FROM base AS release
 ARG BETTERLINT_VERSION=dev
 ARG HADOLINT_VERSION=2.14.0
 ARG TFLINT_VERSION=0.62.0
-ARG YAMLFMT_VERSION=0.13.0
+ARG YAMLFMT_VERSION=0.21.0
 
 # Pinned SHA256 sums for every binary download. Build fails if a download
 # does not match the recorded checksum — defends against upstream tampering
@@ -67,8 +67,8 @@ ARG HADOLINT_SHA256_AMD64=6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f
 ARG HADOLINT_SHA256_ARM64=331f1d3511b84a4f1e3d18d52fec284723e4019552f4f47b19322a53ce9a40ed
 ARG TFLINT_SHA256_AMD64=000400d7f4c2236d9ed4b35fec3ee95617c3747571593cc6138169fc78cc226a
 ARG TFLINT_SHA256_ARM64=064206ec85adaf90f637c880eb3cd5a8e07ddce09e4da7c813eb362cb794f95f
-ARG YAMLFMT_SHA256_AMD64=043e96d754a8afa4f4c5c13ffb2f3e50c6be5a70bf53292d3025abc0b42fe4ae
-ARG YAMLFMT_SHA256_ARM64=c48d38b5ba1014e2a354b8994963936cf6d6211ec8a0e8fe59da4c542352f71e
+ARG YAMLFMT_SHA256_AMD64=1f300d9257b232bb3b541d7fb1b0e6b3c121bcbab381c86cd38cb8722be8a566
+ARG YAMLFMT_SHA256_ARM64=5b2689c963b177271330c5ce8ca7396751107e5a826be46f03d2cb9b6f0c7784
 
 LABEL org.opencontainers.image.title="betterlint" \
       org.opencontainers.image.description="All-in-one linter + auto-fixer: hadolint, tflint, shellcheck, shfmt, markdownlint, commitlint, spectral, gherkin, prettier, eslint, yamlfmt, jq, yq" \
