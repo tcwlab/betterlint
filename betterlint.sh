@@ -7,29 +7,55 @@
 # environment variables.
 #
 # Supported tools:
-#   hadolint      Dockerfile linting
-#   tflint        Terraform/OpenTofu files
-#   ShellCheck    .sh files
-#   markdownlint  .md files
+#   hadolint      Dockerfile linting              (report-only)
+#   tflint        Terraform/OpenTofu files        (report-only)
+#   ShellCheck    .sh files                       (report-only)
+#   markdownlint  .md files                       (auto-fix via --fix)
 #   commitlint    Git commit messages (only when a config is present)
 #   spectral      OpenAPI / AsyncAPI (openapi*.yaml, asyncapi*.yaml)
 #   gherkin       .feature files
 #
+# Auto-fix mode (--fix): runs auto-correctable formatters first, then the
+# regular lint phase. Active fixers (when their binary is on PATH):
+#   markdownlint-cli2 --fix    Markdown
+#   shfmt -w                   Bash / sh
+#   prettier --write           CSS/JS/TS/JSON   (optional, detect-and-skip)
+#   eslint --fix               JS/TS            (optional, detect-and-skip)
+#   yamlfmt                    YAML             (optional, detect-and-skip)
+#
 # Usage:
-#   betterlint [--skip TOOL,...] [--only TOOL,...] [--dir PATH] [--markdown]
+#   betterlint [--skip TOOL,...] [--only TOOL,...] [--dir PATH] [--fix] [--markdown]
 #
 # Environment variables (overridden by flags):
 #   BETTERLINT_SKIP   Comma-separated list of tools to skip
 #   BETTERLINT_ONLY   Run only these tools
-#   BETTERLINT_DIR    Target directory (default: /workspace)
+#   BETTERLINT_DIR    Target directory (default: container's current working
+#                     directory — typically /workspace because the image's
+#                     WORKDIR is /workspace, but any `-w /work`, `-w /repo`,
+#                     etc. works just as well).
+#   BETTERLINT_FIX    Set to "1" to enable --fix mode
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 VERSION="${BETTERLINT_VERSION:-dev}"
-DIR="${BETTERLINT_DIR:-/workspace}"
+# Default scan dir = container's current working directory. The image's
+# WORKDIR is /workspace so naked `docker run` lands there, but `-w /work`,
+# `-w /repo`, etc. work transparently — the script never assumes /workspace.
+DIR="${BETTERLINT_DIR:-${PWD:-/workspace}}"
 SKIP="${BETTERLINT_SKIP:-}"
 ONLY="${BETTERLINT_ONLY:-}"
 OUTPUT_MODE="text"
+FIX_MODE="${BETTERLINT_FIX:-0}"
+
+# Canonical set of linter names. Used for input validation in --only / --skip.
+# Order here also drives the report rendering.
+KNOWN_TOOLS=(hadolint tflint shellcheck markdownlint commitlint spectral gherkin)
+
+# Back-compat shim: with ENTRYPOINT ["/usr/local/bin/betterlint"], invocations
+# like `docker run tcwlab/betterlint:1.0.0 betterlint --foo` would forward an
+# extra "betterlint" arg into this script. Silently absorb it so old callers
+# keep working without changes.
+if [[ "${1:-}" == "betterlint" ]]; then shift; fi
 
 # Default config directory inside the image. The Dockerfile populates it
 # via `COPY defaults/ /etc/betterlint/defaults/`. The BETTERLINT_DEFAULTS_DIR
@@ -47,6 +73,8 @@ while [[ $# -gt 0 ]]; do
             DIR="$2"; shift 2 ;;
         --markdown)
             OUTPUT_MODE="markdown"; shift ;;
+        --fix)
+            FIX_MODE="1"; shift ;;
         --version|-v)
             echo "betterlint ${VERSION}"; exit 0 ;;
         --help|-h)
@@ -59,19 +87,35 @@ Usage:
 Options:
   --skip TOOL,...   Skip these tools (comma-separated list)
   --only TOOL,...   Run only these tools (comma-separated list)
-  --dir  PATH       Target directory (default: /workspace)
+                    Note: --only and --skip are mutually exclusive.
+  --dir  PATH       Target directory (default: current working directory,
+                    typically /workspace via the image's WORKDIR but any
+                    `-w /custom-mount` works without changes).
+  --fix             Run auto-correctable linters in fix mode (in-place edits),
+                    then run all linters as usual to report what's left.
   --markdown        Emit a Markdown table (for PR comments)
   --version         Print version
   --help            This help text
 
-Available tools:
-  hadolint      Dockerfiles (Dockerfile*)
-  tflint        Terraform/OpenTofu files (.tf)
-  shellcheck    Shell scripts (.sh)
-  markdownlint  Markdown files (.md)
-  commitlint    Git commit messages (Conventional Commits 1.0)
-  spectral      OpenAPI / AsyncAPI (openapi*.yaml, asyncapi*.yaml)
-  gherkin       Gherkin feature files (.feature)
+Available tools (use these exact names with --only / --skip):
+  hadolint      Dockerfiles (Dockerfile*)              [report-only]
+  tflint        Terraform/OpenTofu files (.tf)         [report-only]
+  shellcheck    Shell scripts (.sh)                    [report-only]
+  markdownlint  Markdown files (.md)                   [auto-fix supported]
+  commitlint    Git commit messages (Conv. Commits)    [report-only]
+  spectral      OpenAPI / AsyncAPI                     [report-only]
+  gherkin       Gherkin feature files (.feature)      [report-only]
+
+Auto-fix tools (active only with --fix):
+  markdownlint-cli2 --fix    in-place fix of *.md
+  shfmt -w                   in-place format of *.sh (if shfmt installed)
+  prettier --write           CSS/JS/TS/JSON (only if prettier on PATH)
+  eslint --fix               JS/TS (only if eslint on PATH)
+  yamlfmt                    YAML (only if yamlfmt on PATH)
+
+  Tools without auto-fix support (hadolint, tflint, shellcheck, commitlint,
+  spectral, gherkin) still run in --fix mode as plain linters and report
+  remaining findings — exit code = max() over all phases.
 
 Default configs:
   When the consumer repo ships no own configuration, betterlint falls
@@ -79,11 +123,16 @@ Default configs:
   Affected tools: markdownlint, commitlint, spectral. Existing consumer
   configs always win.
 
-Examples:
+Selective invocation (the five common patterns):
+  Run a single linter:        betterlint --only markdownlint
+  Run a list of linters:      betterlint --only markdownlint,shellcheck
+  Skip a single linter:       betterlint --skip hadolint
+  Skip a list of linters:     betterlint --skip hadolint,tflint
+  Combine selection + fix:    betterlint --fix --only markdownlint,shellcheck
+
+Other examples:
   betterlint
-  betterlint --skip commitlint,spectral
-  betterlint --only hadolint,tflint
-  betterlint --only shellcheck,markdownlint
+  betterlint --fix
   betterlint --markdown > /tmp/lint-report.md
 HELP
             exit 0 ;;
@@ -93,6 +142,52 @@ HELP
             exit 1 ;;
     esac
 done
+
+# ── Argument validation ─────────────────────────────────────────────────────
+# Exit code 2 = user-facing CLI error (distinct from exit 1 = lint findings).
+
+# --only and --skip are mutually exclusive: combining them is logically
+# inconsistent — either you allow-list or you deny-list, not both.
+if [[ -n "$ONLY" && -n "$SKIP" ]]; then
+    cat >&2 <<EOF
+betterlint: --only and --skip are mutually exclusive.
+  --only TOOL,...  defines an allow-list (everything else is skipped)
+  --skip TOOL,...  defines a deny-list (everything else runs)
+Pick exactly one.
+EOF
+    exit 2
+fi
+
+# Reject unknown linter names early so a typo in --only foo,markdownlint
+# doesn't silently skip the linter the user actually wanted.
+validate_tool_list() {
+    local flag="$1" raw="$2"
+    [[ -z "$raw" ]] && return 0
+    local IFS=','
+    # shellcheck disable=SC2206
+    local entries=($raw)
+    local entry known
+    for entry in "${entries[@]}"; do
+        # Trim surrounding whitespace
+        entry="${entry#"${entry%%[![:space:]]*}"}"
+        entry="${entry%"${entry##*[![:space:]]}"}"
+        [[ -z "$entry" ]] && continue
+        known=false
+        for k in "${KNOWN_TOOLS[@]}"; do
+            if [[ "$entry" == "$k" ]]; then known=true; break; fi
+        done
+        if ! $known; then
+            {
+                echo "betterlint: unknown linter '$entry' in $flag"
+                echo "  Known linters: ${KNOWN_TOOLS[*]}"
+                echo "  See 'betterlint --help' for the full list."
+            } >&2
+            exit 2
+        fi
+    done
+}
+validate_tool_list --only "$ONLY"
+validate_tool_list --skip "$SKIP"
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -123,6 +218,122 @@ set_result() {
 
 # ── Switch directory ────────────────────────────────────────────────────────
 cd "$DIR"
+
+# ── Auto-fix phase ──────────────────────────────────────────────────────────
+# Runs first when --fix is set. Each fixer is gated on:
+#   1. is_enabled (respects --skip / --only)
+#   2. command -v (skip with hint when the binary is missing)
+#   3. file pattern match (skip silently when nothing matches)
+# After the fix phase, the regular lint phase runs unchanged so the user gets
+# a final report on remaining findings (incl. those that no auto-fixer can
+# resolve, e.g. hadolint / tflint / shellcheck issues).
+declare -A FIX_STATUS=()    # ok | fail | skip | unavailable
+declare -A FIX_DETAIL=()
+FIX_FAIL=false
+
+set_fix_result() {
+    local name="$1" status="$2" detail="${3:-}"
+    FIX_STATUS[$name]="$status"
+    FIX_DETAIL[$name]="${detail:0:400}"
+    if [[ "$status" == "fail" ]]; then FIX_FAIL=true; fi
+}
+
+if [[ "$FIX_MODE" == "1" ]]; then
+    # --- markdownlint-cli2 --fix (Markdown) ---
+    if is_enabled markdownlint; then
+        mapfile -t MD_FILES_FIX < <(find . -name "*.md" ! -path "./.git/*" \
+            ! -path "./node_modules/*" 2>/dev/null || true)
+        if [[ ${#MD_FILES_FIX[@]} -eq 0 ]]; then
+            set_fix_result markdownlint-fix skip "no .md files found"
+        elif ! command -v markdownlint-cli2 &>/dev/null; then
+            set_fix_result markdownlint-fix unavailable "markdownlint-cli2 not on PATH"
+        else
+            markdownlint_cfg=(--config "${DEFAULTS_DIR}/markdownlint.json")
+            for _cfg in .markdownlint-cli2.jsonc .markdownlint-cli2.yaml .markdownlint-cli2.cjs \
+                        .markdownlint-cli2.mjs .markdownlint.jsonc .markdownlint.json \
+                        .markdownlint.yaml .markdownlint.yml .markdownlint.cjs \
+                        .markdownlint.mjs .markdownlintrc; do
+                if [[ -f "$_cfg" ]]; then markdownlint_cfg=(); break; fi
+            done
+            # markdownlint-cli2 --fix exits non-zero when issues remain after fixing;
+            # that's expected and we don't treat the fix phase as failed for that.
+            out=$(markdownlint-cli2 --fix "${markdownlint_cfg[@]}" \
+                "**/*.md" "#node_modules" "#.git" 2>&1 || true)
+            set_fix_result markdownlint-fix ok "${out:-no remaining issues}"
+        fi
+    fi
+
+    # --- shfmt -w (Bash / sh) ---
+    if is_enabled shellcheck; then
+        mapfile -t SH_FILES_FIX < <(find . -name "*.sh" ! -path "./.git/*" \
+            ! -path "./node_modules/*" 2>/dev/null || true)
+        if [[ ${#SH_FILES_FIX[@]} -eq 0 ]]; then
+            set_fix_result shfmt skip "no .sh files found"
+        elif ! command -v shfmt &>/dev/null; then
+            set_fix_result shfmt unavailable "shfmt not on PATH (install via 'apk add shfmt')"
+        else
+            out=""; ok=true
+            for f in "${SH_FILES_FIX[@]}"; do
+                r=$(shfmt -w "$f" 2>&1) || { out+="$f: $r"$'\n'; ok=false; }
+            done
+            if $ok; then set_fix_result shfmt ok; else set_fix_result shfmt fail "$out"; fi
+        fi
+    fi
+
+    # --- prettier --write (CSS/JS/TS/JSON) — optional, detect-and-skip ---
+    if is_enabled prettier; then
+        mapfile -t PRETTIER_FILES_FIX < <(find . \
+            \( -name "*.css" -o -name "*.scss" -o -name "*.js" -o -name "*.jsx" \
+               -o -name "*.ts" -o -name "*.tsx" -o -name "*.json" \) \
+            ! -path "./.git/*" ! -path "./node_modules/*" 2>/dev/null || true)
+        if [[ ${#PRETTIER_FILES_FIX[@]} -eq 0 ]]; then
+            set_fix_result prettier skip "no Prettier-eligible files found"
+        elif ! command -v prettier &>/dev/null; then
+            set_fix_result prettier unavailable "prettier not on PATH (not bundled in betterlint)"
+        else
+            if out=$(prettier --write "${PRETTIER_FILES_FIX[@]}" 2>&1); then
+                set_fix_result prettier ok "$out"
+            else
+                set_fix_result prettier fail "$out"
+            fi
+        fi
+    fi
+
+    # --- eslint --fix (JS/TS) — optional, detect-and-skip ---
+    if is_enabled eslint; then
+        mapfile -t ESLINT_FILES_FIX < <(find . \
+            \( -name "*.js" -o -name "*.jsx" -o -name "*.ts" -o -name "*.tsx" \) \
+            ! -path "./.git/*" ! -path "./node_modules/*" 2>/dev/null || true)
+        if [[ ${#ESLINT_FILES_FIX[@]} -eq 0 ]]; then
+            set_fix_result eslint skip "no JS/TS files found"
+        elif ! command -v eslint &>/dev/null; then
+            set_fix_result eslint unavailable "eslint not on PATH (not bundled in betterlint)"
+        else
+            # eslint exits non-zero on remaining lint errors; capture but don't fail
+            # the fix phase on it — the lint phase below will surface them again.
+            out=$(eslint --fix "${ESLINT_FILES_FIX[@]}" 2>&1 || true)
+            set_fix_result eslint ok "${out:-no remaining issues}"
+        fi
+    fi
+
+    # --- yamlfmt (YAML) — optional, detect-and-skip ---
+    if is_enabled yamlfmt; then
+        mapfile -t YAML_FILES_FIX < <(find . \
+            \( -name "*.yaml" -o -name "*.yml" \) \
+            ! -path "./.git/*" ! -path "./node_modules/*" 2>/dev/null || true)
+        if [[ ${#YAML_FILES_FIX[@]} -eq 0 ]]; then
+            set_fix_result yamlfmt skip "no YAML files found"
+        elif ! command -v yamlfmt &>/dev/null; then
+            set_fix_result yamlfmt unavailable "yamlfmt not on PATH (not bundled in betterlint)"
+        else
+            if out=$(yamlfmt "${YAML_FILES_FIX[@]}" 2>&1); then
+                set_fix_result yamlfmt ok "$out"
+            else
+                set_fix_result yamlfmt fail "$out"
+            fi
+        fi
+    fi
+fi
 
 # ── hadolint ────────────────────────────────────────────────────────────────
 if is_enabled hadolint; then
@@ -277,6 +488,7 @@ fi
 
 # ── Output ──────────────────────────────────────────────────────────────────
 TOOLS=(hadolint tflint shellcheck markdownlint commitlint spectral gherkin)
+FIXERS=(markdownlint-fix shfmt prettier eslint yamlfmt)
 
 if [[ "$OUTPUT_MODE" == "markdown" ]]; then
     if $OVERALL_FAIL; then
@@ -285,6 +497,29 @@ if [[ "$OUTPUT_MODE" == "markdown" ]]; then
         echo "**✅ All linting checks passed**"
     fi
     echo ""
+    if [[ "$FIX_MODE" == "1" ]]; then
+        echo "### Auto-fix phase"
+        echo ""
+        echo "| Fixer | Status | Details |"
+        echo "|---|---|---|"
+        for t in "${FIXERS[@]}"; do
+            s="${FIX_STATUS[$t]:-skip}"
+            d="${FIX_DETAIL[$t]:-}"
+            d="${d//|/,}"
+            d="${d//$'\n'/ }"
+            d="${d//\`/\'}"
+            d=$(printf '%s' "$d" | sed 's/\x1b\[[0-9;]*m//g')
+            case "$s" in
+                ok)          echo "| \`$t\` | 🛠️ fixed | ${d:0:200} |" ;;
+                fail)        echo "| \`$t\` | ❌ | \`${d:0:200}\` |" ;;
+                skip)        echo "| \`$t\` | ⏭️ | $d |" ;;
+                unavailable) echo "| \`$t\` | ⚠️ | $d |" ;;
+            esac
+        done
+        echo ""
+        echo "### Lint phase"
+        echo ""
+    fi
     echo "| Tool | Status | Details |"
     echo "|---|---|---|"
     for t in "${TOOLS[@]}"; do
@@ -304,6 +539,20 @@ if [[ "$OUTPUT_MODE" == "markdown" ]]; then
     done
 else
     printf "\nbetterlint %s — %s\n\n" "$VERSION" "$(date -u '+%Y-%m-%d %H:%M UTC')"
+    if [[ "$FIX_MODE" == "1" ]]; then
+        echo "── Auto-fix phase ──"
+        for t in "${FIXERS[@]}"; do
+            s="${FIX_STATUS[$t]:-skip}"
+            case "$s" in
+                ok)          printf "  🛠️  %-18s  fixed in-place\n" "$t" ;;
+                fail)        printf "  ❌  %-18s  FAILED\n" "$t" ;;
+                skip)        printf "  ⏭️   %-18s  (%s)\n" "$t" "${FIX_DETAIL[$t]:-}" ;;
+                unavailable) printf "  ⚠️   %-18s  (%s)\n" "$t" "${FIX_DETAIL[$t]:-}" ;;
+            esac
+        done
+        echo ""
+        echo "── Lint phase ──"
+    fi
     for t in "${TOOLS[@]}"; do
         s="${STATUS[$t]:-skip}"
         case "$s" in
@@ -313,7 +562,14 @@ else
         esac
     done
 
-    # Print error details
+    # Print error details (fix phase first, then lint phase)
+    if [[ "$FIX_MODE" == "1" ]]; then
+        for t in "${FIXERS[@]}"; do
+            if [[ "${FIX_STATUS[$t]:-}" == "fail" ]]; then
+                printf "\n── fix: %s ──\n%s\n" "$t" "${FIX_DETAIL[$t]}"
+            fi
+        done
+    fi
     for t in "${TOOLS[@]}"; do
         if [[ "${STATUS[$t]:-}" == "fail" ]]; then
             printf "\n── %s ──\n%s\n" "$t" "${DETAIL[$t]}"
@@ -322,4 +578,6 @@ else
     echo ""
 fi
 
-if $OVERALL_FAIL; then exit 1; else exit 0; fi
+# Exit code = max() over fix phase and lint phase. The lint phase always
+# runs after fixers so remaining (non-auto-fixable) findings still surface.
+if $OVERALL_FAIL || $FIX_FAIL; then exit 1; else exit 0; fi
