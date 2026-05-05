@@ -7,6 +7,7 @@
 #   hadolint        Dockerfile linting
 #   tflint          Terraform/OpenTofu linting
 #   shellcheck      Shell scripts
+#   shfmt           Shell script auto-formatter (used by --fix)
 #   markdownlint    Markdown files
 #   commitlint      Git commit messages
 #   spectral        OpenAPI / AsyncAPI
@@ -14,7 +15,7 @@
 #   jq              JSON processor (validation + filter)
 #   yq              YAML processor (validation + filter)
 #
-# Wrapper: /usr/local/bin/betterlint  (auto-detect, --skip/--only, --markdown)
+# Wrapper: /usr/local/bin/betterlint  (auto-detect, --skip/--only, --fix, --markdown)
 #
 # Supported platforms: linux/amd64, linux/arm64
 #
@@ -34,6 +35,7 @@ RUN apk add -U --no-cache \
       python3 \
       py3-pip \
       shellcheck \
+      shfmt \
       curl \
       unzip \
       git \
@@ -53,7 +55,7 @@ ARG HADOLINT_VERSION=2.14.0
 ARG TFLINT_VERSION=0.62.0
 
 LABEL org.opencontainers.image.title="betterlint" \
-      org.opencontainers.image.description="All-in-one linter: hadolint, tflint, shellcheck, markdownlint, commitlint, spectral, gherkin, jq, yq" \
+      org.opencontainers.image.description="All-in-one linter: hadolint, tflint, shellcheck, shfmt, markdownlint, commitlint, spectral, gherkin, jq, yq" \
       org.opencontainers.image.vendor="The Chameleon Way" \
       org.opencontainers.image.url="https://hub.docker.com/r/tcwlab/betterlint" \
       org.opencontainers.image.source="https://github.com/tcwlab/betterlint" \
@@ -115,6 +117,7 @@ ENV BETTERLINT_VERSION=${BETTERLINT_VERSION}
 RUN hadolint --version \
   && tflint --version \
   && shellcheck --version \
+  && shfmt --version \
   && markdownlint-cli2 --version \
   && commitlint --version \
   && spectral --version \
@@ -129,3 +132,10 @@ RUN hadolint --version \
 
 USER linter
 WORKDIR /workspace
+
+# ENTRYPOINT: lock the container surface to the betterlint CLI. Any
+# `docker run tcwlab/betterlint:<tag> [args...]` invocation goes straight to
+# the wrapper — no implicit shell, no node REPL, no stray binaries reachable
+# without an explicit `--entrypoint` override. Naked `docker run` (no args)
+# runs the default lint phase against /workspace.
+ENTRYPOINT ["/usr/local/bin/betterlint"]
