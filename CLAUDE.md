@@ -2,8 +2,8 @@
 
 > **Onboarding handshake.** Read in this order:
 >
-> 1. [`Projects/CLAUDE.md`](https://git.mon.k8b.co/) (global standards)
-> 2. [`tcwlab/CLAUDE.md`](https://git.mon.k8b.co/tcwlab/) (toolchain context, consumer API)
+> 1. `Projects/CLAUDE.md` (global standards, workspace-local)
+> 2. `tcwlab/CLAUDE.md` (toolchain context, consumer API, workspace-local)
 > 3. This file (betterlint-specific notes)
 
 ---
@@ -34,7 +34,7 @@ In practice that covers every `Atrium/*`, `Spectrum/*`, `Tally/*`, `IdentServ/*`
 
 ## What's inside?
 
-The image contents — exactly as declared in the [Dockerfile](https://git.mon.k8b.co/tcwlab/betterlint/src/branch/main/Dockerfile):
+The image contents — exactly as declared in the [Dockerfile](https://github.com/tcwlab/betterlint/blob/main/Dockerfile):
 
 | Tool | Version | Source | Job |
 |------|---------|--------|-----|
@@ -47,7 +47,7 @@ The image contents — exactly as declared in the [Dockerfile](https://git.mon.k
 | `@stoplight/spectral-cli` | `6.15.1` | npm global | OpenAPI/AsyncAPI lint |
 | `gherkin-official` | `39.0.0` | pip3 (`--break-system-packages`) | Gherkin syntax validator |
 
-Plus the central wrapper [`betterlint.sh`](https://git.mon.k8b.co/tcwlab/betterlint/src/branch/main/betterlint.sh) installed as `/usr/local/bin/betterlint`. Auto-detect logic: it inspects the workdir and runs only the linters whose file patterns match. Options: `--skip TOOL,...`, `--only TOOL,...`, `--dir PATH`, `--markdown` (for PR comment output), `--version`.
+Plus the central wrapper [`betterlint.sh`](https://github.com/tcwlab/betterlint/blob/main/betterlint.sh) installed as `/usr/local/bin/betterlint`. Auto-detect logic: it inspects the workdir and runs only the linters whose file patterns match. Options: `--skip TOOL,...`, `--only TOOL,...`, `--dir PATH`, `--markdown` (for PR comment output), `--version`.
 
 Base image: `node:24-alpine` as a BUILDPLATFORM-aware multi-stage build. The image is built for `linux/amd64` and `linux/arm64`.
 
@@ -67,7 +67,7 @@ For now manual, because tcwlab is too small for Renovate. Workflow:
 2. Smoke-test in the build job (the Dockerfile's last stage runs a smoke-test block).
 3. Conventional Commits message: `feat: bump <tool> to <version>`.
 4. semantic-release cuts a new `betterlint` SemVer and pushes `tcwlab/betterlint:<x.y.z>`.
-5. Update [`tcwlab/versions.yaml`](https://git.mon.k8b.co/tcwlab/) at the top level of the workspace.
+5. Update `tcwlab/versions.yaml` at the top level of the workspace.
 
 For small tool updates (e.g. a `tflint` patch): patch-bump the `betterlint` SemVer. For tool major updates or a new tool: minor bump.
 
@@ -79,7 +79,7 @@ Never use `latest` as a source pin. Every linter binary must land in a concrete 
 
 ## Release procedure
 
-[`semantic-release`](https://git.mon.k8b.co/tcwlab/betterlint/src/branch/main/.releaserc) is configured with:
+[`semantic-release`](https://github.com/tcwlab/betterlint/blob/main/.releaserc) is configured with:
 
 - `@semantic-release/commit-analyzer` → derive the SemVer step from Conventional Commits
 - `@semantic-release/release-notes-generator` → changelog
@@ -96,7 +96,7 @@ Branch protection is on for `main` (status check `ci`, squash-merge, branch-dele
 
 1. **PR on `claude/bump-<tool>-<version>`**: change `ARG <TOOL>_VERSION`.
 2. **Run the smoke tests** — the smoke-test block in the Dockerfile checks `<tool> --version`. If that passes locally / in CI, the binary is compatible.
-3. **Check consumer paths**: in the templates ([`templates/iac-ci.yml`](https://git.mon.k8b.co/tcwlab/templates), [`templates/service-ci.yml`](https://git.mon.k8b.co/tcwlab/templates), [`templates/docker-image-ci.yml`](https://git.mon.k8b.co/tcwlab/templates)) `BETTERLINT_VERSION:` is set as a default. On a major bump in `betterlint`, raise the templates separately so newly bootstrapped consumer repos pick up the new default.
+3. **Check consumer paths**: in the templates ([`templates/iac-ci.yml`](https://github.com/tcwlab/templates/blob/main/iac-ci.yml), [`templates/service-ci.yml`](https://github.com/tcwlab/templates/blob/main/service-ci.yml), [`templates/docker-image-ci.yml`](https://github.com/tcwlab/templates/blob/main/docker-image-ci.yml)) `BETTERLINT_VERSION:` is set as a default. On a major bump in `betterlint`, raise the templates separately so newly bootstrapped consumer repos pick up the new default.
 4. **Changelog**: produced by semantic-release automatically — but verify that the commit message makes the change clear to consumers.
 5. **Consumer outreach** (on breaking changes): add a short note in `tcwlab/CLAUDE.md` if consumers need to bump `BETTERLINT_VERSION`.
 

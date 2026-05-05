@@ -11,10 +11,10 @@
 ## Quick start
 
 ```bash
-docker pull tcwlab/betterlint:1.0.0
+docker pull tcwlab/betterlint:latest
 
 # Run against the current directory
-docker run --rm -v "$PWD:/workspace" tcwlab/betterlint:1.0.0
+docker run --rm -v "$PWD:/workspace" tcwlab/betterlint:latest
 ```
 
 Or as a Forgejo / GitHub-Actions container job:
@@ -23,7 +23,7 @@ Or as a Forgejo / GitHub-Actions container job:
 lint:
   runs-on: ubuntu-22.04
   container:
-    image: tcwlab/betterlint:1.0.0
+    image: tcwlab/betterlint:latest
   steps:
     - uses: https://data.forgejo.org/actions/checkout@v4
     - run: betterlint --dir .
@@ -31,9 +31,15 @@ lint:
 
 The wrapper auto-detects which file types are present and runs only the relevant linters — no configuration needed for the common case.
 
+> Quick-start examples use `:latest` so you can try the image immediately. For
+> production CI pipelines, pin a concrete tag — see [Tags](#tags) below.
+
 ---
 
 ## Tags
+
+> Version numbers below are illustrative. For the current set of tags, see
+> [Docker Hub tags](https://hub.docker.com/r/tcwlab/betterlint/tags).
 
 | Tag | Description |
 |-----|-------------|
@@ -197,18 +203,15 @@ If you need a linter that is not in this image, please open a [feature request](
 
 ## Source, issues, contributing
 
-- **Source (canonical)**: [`git.mon.k8b.co/tcwlab/betterlint`](https://git.mon.k8b.co/tcwlab/betterlint)
-- **Source (mirror)**: [`github.com/tcwlab/betterlint`](https://github.com/tcwlab/betterlint)
+- **Source**: [`github.com/tcwlab/betterlint`](https://github.com/tcwlab/betterlint)
 - **Issues / feature requests**: [`github.com/tcwlab/betterlint/issues`](https://github.com/tcwlab/betterlint/issues)
 - **Docker Hub**: [`hub.docker.com/r/tcwlab/betterlint`](https://hub.docker.com/r/tcwlab/betterlint)
-
-The Forgejo repo on `git.mon.k8b.co` is the source of truth. The GitHub mirror exists so external consumers have a public-facing copy with an issue tracker; please open issues there.
 
 ---
 
 ## Build, supply chain
 
-Every release is built and published by the repo's own [`.forgejo/workflows/ci.yml`](https://git.mon.k8b.co/tcwlab/betterlint/src/branch/main/.forgejo/workflows/ci.yml) on a Forgejo runner:
+Every release is built and published by the repo's own [`.forgejo/workflows/ci.yml`](https://github.com/tcwlab/betterlint/blob/main/.forgejo/workflows/ci.yml) on a Forgejo runner:
 
 - Multi-arch build (`linux/amd64`, `linux/arm64`) via `docker buildx` with `--sbom=true --provenance=mode=max`.
 - Trivy vulnerability scan on `HIGH`/`CRITICAL` severity (failures show up as PR comments).

@@ -56,7 +56,7 @@ LABEL org.opencontainers.image.title="betterlint" \
       org.opencontainers.image.description="All-in-one linter: hadolint, tflint, shellcheck, markdownlint, commitlint, spectral, gherkin, jq, yq" \
       org.opencontainers.image.vendor="The Chameleon Way" \
       org.opencontainers.image.url="https://hub.docker.com/r/tcwlab/betterlint" \
-      org.opencontainers.image.source="https://git.mon.k8b.co/tcwlab/betterlint" \
+      org.opencontainers.image.source="https://github.com/tcwlab/betterlint" \
       org.opencontainers.image.version="${BETTERLINT_VERSION}"
 
 # hadolint + tflint: arch-aware binary downloads
