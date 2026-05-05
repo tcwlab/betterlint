@@ -57,6 +57,23 @@ KNOWN_TOOLS=(hadolint tflint shellcheck markdownlint commitlint spectral gherkin
 # keep working without changes.
 if [[ "${1:-}" == "betterlint" ]]; then shift; fi
 
+# Back-compat shim (continued): legacy callers used `<TOOL>` as a positional
+# arg to mean "run only this linter" — that pattern predates the explicit
+# --only/--skip flags. If the first positional is a known linter name,
+# convert to `--only TOOL` and emit a one-line deprecation warning so
+# external pipelines (Atrium, Spectrum, …) keep working while we sweep their
+# callers over to the explicit flag. Targeted (only KNOWN_TOOLS), so legit
+# typos still hit the "Unknown option" arm below.
+if [[ $# -gt 0 ]]; then
+    for _kt in "${KNOWN_TOOLS[@]}"; do
+        if [[ "$1" == "$_kt" ]]; then
+            echo "betterlint: ⚠️  deprecated invocation: positional '$1' — use '--only $1' instead" >&2
+            set -- --only "$1" "${@:2}"
+            break
+        fi
+    done
+fi
+
 # Default config directory inside the image. The Dockerfile populates it
 # via `COPY defaults/ /etc/betterlint/defaults/`. The BETTERLINT_DEFAULTS_DIR
 # env var lets local tests redirect the path without patching the image.
