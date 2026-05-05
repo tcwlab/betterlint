@@ -78,7 +78,7 @@ Every tag is a multi-arch manifest list. Docker pulls the right architecture aut
 | `yq` | from Alpine apk | YAML processor (validation + filter) |
 | `betterlint` (wrapper) | `1.0.0` | Auto-detect runner (`/usr/local/bin/betterlint`) |
 
-Base image: `node:24-alpine`. Default workdir: `/workspace`. Default user: `linter` (non-root, uid auto-assigned).
+Base image: `node:24-alpine`. Default workdir: `/workspace`. Default user: `betterlint` (non-root, fixed UID/GID `10001:10001`). See [Security posture](#security-posture) for the rationale and the recommended hardened `docker run` line.
 
 ---
 
@@ -335,6 +335,81 @@ Override the image tag at runtime with `BETTERLINT_IMAGE`:
 ```bash
 BETTERLINT_IMAGE=tcwlab/betterlint:1.0.0 betterlint --fix
 ```
+
+---
+
+## Security posture
+
+The image is built to run under tight runtime restrictions so consumer pipelines can drop it into hardened environments without extra wrapping.
+
+### Hardening assumptions baked into the image
+
+- **`ENTRYPOINT` lockdown.** The image's `ENTRYPOINT` is fixed to `/usr/local/bin/betterlint`. `docker run <image> /bin/sh` does **not** open a shell; the shell argument is forwarded to the wrapper as a CLI arg. Reaching a shell requires an explicit `--entrypoint` override, which the CI gate verifies on every build.
+- **Non-root by default — fixed UID/GID `10001:10001`.** The `betterlint` user is created with a deterministic UID so host bind-mounts produce predictable file ownership across machines, and so Kubernetes / OpenShift admission controllers that enforce `runAsNonRoot` can confirm the UID without resolving `/etc/passwd` inside the container.
+- **SHA256-verified binary downloads.** `hadolint` and `tflint` are installed via `curl` from upstream GitHub releases and then verified against pinned SHA256 sums in the Dockerfile (`HADOLINT_SHA256_*`, `TFLINT_SHA256_*` build args). A mismatch fails the build — no tampered or accidentally re-cut release artifact ever reaches the final image.
+- **No healthcheck.** `HEALTHCHECK NONE` is set explicitly so no inherited or default healthcheck process keeps running in the background. The image is invoked one-shot.
+- **`--read-only`, `--cap-drop=ALL`, and `--security-opt=no-new-privileges` compatible.** The CI pipeline runs a hardened smoke-test on every build that exercises the image under all three flags simultaneously. If any flag would break the wrapper, the build fails before publish.
+
+### Recommended `docker run`
+
+```bash
+docker run --rm \
+  --read-only \
+  --tmpfs /tmp \
+  --cap-drop=ALL \
+  --security-opt=no-new-privileges \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD:/workspace" \
+  tcwlab/betterlint:latest
+```
+
+`--user "$(id -u):$(id -g)"` overrides the image's default UID so files written by `--fix` land with the host user's ownership. The image accepts any UID — the default `10001:10001` only kicks in when `--user` is not passed.
+
+### Hardened wrapper variant
+
+Drop-in replacement for the shell function in [Install as `betterlint` CLI](#install-as-betterlint-cli) that always passes the security flags above:
+
+```bash
+betterlint() {
+    docker run --rm \
+        --read-only --tmpfs /tmp \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        --user "$(id -u):$(id -g)" \
+        -v "$PWD:/workspace" \
+        -w /workspace \
+        tcwlab/betterlint:latest "$@"
+}
+```
+
+### SBOM and provenance
+
+Each published tag carries an SPDX SBOM and `mode=max` provenance attestation produced by `docker buildx`. Inspect via:
+
+```bash
+docker buildx imagetools inspect tcwlab/betterlint:<tag> \
+  --format '{{ json .SBOM }}'
+
+docker buildx imagetools inspect tcwlab/betterlint:<tag> \
+  --format '{{ json .Provenance }}'
+```
+
+### Trivy gate in CI
+
+Every build runs a two-pass Trivy scan against the image:
+
+1. **Hard gate** during `build-test`: `--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1`. Any HIGH or CRITICAL vulnerability with an upstream fix available fails the build immediately. Downstream `security` and `publish` jobs do not run on a gated failure.
+2. **Reporting pass** during `security`: full scan including unfixable CVEs, posted as a PR comment so maintainers retain visibility. The most recent scan results are always available on the [Docker Hub vulnerability tab](https://hub.docker.com/r/tcwlab/betterlint/tags).
+
+### Scope and non-goals
+
+This posture covers what `betterlint` ships in its image. Things explicitly out of scope:
+
+- **The lint tools themselves are upstream code.** We pin versions, hash-verify binary downloads, and scan the image layers with Trivy, but we do not audit the source of `hadolint`, `tflint`, `markdownlint-cli2`, or any other bundled tool.
+- **Consumer Dockerfiles and configs are the consumer's responsibility.** A repo that mounts secrets into `/workspace` will see those secrets inside the container — the image cannot defend against that.
+- **`betterlint` is not a security scanner.** Application-level scanning is `tcwlab/trivy`'s job. Lint and scan are separate pipeline phases on purpose.
+
+To report a security issue, open an [issue](https://github.com/tcwlab/betterlint/issues) marked `security` or contact the maintainers privately.
 
 ---
 
