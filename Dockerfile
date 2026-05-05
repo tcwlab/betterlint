@@ -54,31 +54,52 @@ ARG BETTERLINT_VERSION=dev
 ARG HADOLINT_VERSION=2.14.0
 ARG TFLINT_VERSION=0.62.0
 
+# Pinned SHA256 sums for every binary download. Build fails if a download
+# does not match the recorded checksum — defends against upstream tampering
+# and accidental release re-cuts. Update these together with the *_VERSION
+# bumps. Compute via:
+#   curl -fsSL <url> | sha256sum
+ARG HADOLINT_SHA256_AMD64=6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47
+ARG HADOLINT_SHA256_ARM64=331f1d3511b84a4f1e3d18d52fec284723e4019552f4f47b19322a53ce9a40ed
+ARG TFLINT_SHA256_AMD64=000400d7f4c2236d9ed4b35fec3ee95617c3747571593cc6138169fc78cc226a
+ARG TFLINT_SHA256_ARM64=064206ec85adaf90f637c880eb3cd5a8e07ddce09e4da7c813eb362cb794f95f
+
 LABEL org.opencontainers.image.title="betterlint" \
       org.opencontainers.image.description="All-in-one linter: hadolint, tflint, shellcheck, shfmt, markdownlint, commitlint, spectral, gherkin, jq, yq" \
       org.opencontainers.image.vendor="The Chameleon Way" \
       org.opencontainers.image.url="https://hub.docker.com/r/tcwlab/betterlint" \
       org.opencontainers.image.source="https://github.com/tcwlab/betterlint" \
+      org.opencontainers.image.documentation="https://github.com/tcwlab/betterlint/blob/main/README.md" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${BETTERLINT_VERSION}"
 
-# hadolint + tflint: arch-aware binary downloads
+# hadolint + tflint: arch-aware binary downloads with SHA256 verification.
+# The checksum check (sha256sum -c) aborts the build with a non-zero exit
+# code on any mismatch, so a tampered or unexpectedly-replaced upstream
+# release artifact never lands in the final image.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN case "$(apk --print-arch)" in \
       aarch64) \
         HADOLINT_ARCH="arm64" ; \
-        TFLINT_ARCH="arm64" ;; \
+        TFLINT_ARCH="arm64" ; \
+        HADOLINT_SHA256="${HADOLINT_SHA256_ARM64}" ; \
+        TFLINT_SHA256="${TFLINT_SHA256_ARM64}" ;; \
       x86_64) \
         HADOLINT_ARCH="x86_64" ; \
-        TFLINT_ARCH="amd64" ;; \
+        TFLINT_ARCH="amd64" ; \
+        HADOLINT_SHA256="${HADOLINT_SHA256_AMD64}" ; \
+        TFLINT_SHA256="${TFLINT_SHA256_AMD64}" ;; \
       *) echo "Unsupported architecture: $(apk --print-arch)" && exit 1 ;; \
     esac && \
     curl -fsSL \
       "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${HADOLINT_ARCH}" \
       -o /usr/local/bin/hadolint && \
+    echo "${HADOLINT_SHA256}  /usr/local/bin/hadolint" | sha256sum -c - && \
     chmod +x /usr/local/bin/hadolint && \
     curl -fsSL \
       "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_${TFLINT_ARCH}.zip" \
       -o /tmp/tflint.zip && \
+    echo "${TFLINT_SHA256}  /tmp/tflint.zip" | sha256sum -c - && \
     unzip -q /tmp/tflint.zip tflint -d /usr/local/bin/ && \
     rm /tmp/tflint.zip && \
     chmod +x /usr/local/bin/tflint && \
@@ -109,8 +130,13 @@ RUN ln -s /usr/local/lib/node_modules /etc/betterlint/defaults/node_modules
 COPY betterlint.sh /usr/local/bin/betterlint
 RUN chmod +x /usr/local/bin/betterlint
 
-# Non-root user
-RUN addgroup -S linter && adduser -S linter -G linter
+# Non-root user with a fixed UID/GID so consumer host-bind-mounts produce
+# predictable file ownership across every machine that runs the image.
+# UID/GID 10001 is well above the Linux SYS_UID_MAX default (60000 cap, but
+# distro-typical service accounts stop around 999) and below the OpenShift
+# arbitrary-uid range — no collisions with host system accounts.
+RUN addgroup -S -g 10001 betterlint \
+ && adduser  -S -D -H -u 10001 -G betterlint betterlint
 
 # Smoke test: every tool, the wrapper, and all default configs must be present
 ENV BETTERLINT_VERSION=${BETTERLINT_VERSION}
@@ -130,8 +156,16 @@ RUN hadolint --version \
   && test -f /etc/betterlint/defaults/spectral.yaml \
   && test -L /etc/betterlint/defaults/node_modules
 
-USER linter
+# Drop privileges. Numeric form so Kubernetes / OpenShift admission
+# controllers that enforce runAsNonRoot can confirm the UID without
+# resolving /etc/passwd inside the container.
+USER 10001:10001
 WORKDIR /workspace
+
+# Disable the inherited base-image healthcheck (if any). A linter image
+# is invoked one-shot; a long-running healthcheck process makes no sense
+# and would only widen the runtime surface.
+HEALTHCHECK NONE
 
 # ENTRYPOINT: lock the container surface to the betterlint CLI. Any
 # `docker run tcwlab/betterlint:<tag> [args...]` invocation goes straight to

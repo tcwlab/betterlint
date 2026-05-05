@@ -17,7 +17,12 @@
 #   security      → comment with marker <!-- trivy-report -->
 #   betterlint    → comment with marker <!-- betterlint-report -->
 #   On the next run the same job updates its comment instead of creating
-#   a new one.
+#   a new one. On non-PR events (push to main, etc.) the security job
+#   writes its findings to $GITHUB_STEP_SUMMARY instead.
+#
+# Vulnerability triage: the security job is non-blocking (exit-code 0).
+# HIGH/CRITICAL findings are surfaced via PR comment / step summary so a
+# human can decide per case whether to bump, waive, or block the merge.
 #
 # Versioning: Semantic Release (v*.*.*) via release.yml
 #   → tcwlab/betterlint:<semver>          immutable  (e.g. 1.2.47)
@@ -87,6 +92,38 @@ jobs:
           docker run --rm --entrypoint python3          "${{ env.IMAGE }}:test" \
             -c "from gherkin.parser import Parser; print('gherkin ok')"
 
+      - name: Hardened runtime smoke-test
+        run: |
+          # Verify the image still works under the runtime restrictions we
+          # recommend in the README. If any of these flags break the wrapper,
+          # the README is lying to consumers.
+          #   --read-only           : root FS is mounted read-only
+          #   --tmpfs /tmp          : writable scratch for tools that need it
+          #   --cap-drop=ALL        : drop every Linux capability
+          #   --security-opt        : block privilege escalation via setuid
+          #   --user 10001:10001    : matches the Dockerfile's USER directive
+          docker run --rm \
+            --read-only \
+            --tmpfs /tmp \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --user 10001:10001 \
+            "${{ env.IMAGE }}:test" --version
+
+      - name: ENTRYPOINT lockdown verification
+        run: |
+          # The Dockerfile locks ENTRYPOINT to /usr/local/bin/betterlint so
+          # `docker run <image> /bin/sh -c true` MUST fail (the shell becomes
+          # an arg to the wrapper, not the entrypoint). If this run somehow
+          # succeeds, the lockdown was bypassed (e.g. someone reverted the
+          # ENTRYPOINT line) and the README is making promises the image
+          # cannot keep.
+          if docker run --rm "${{ env.IMAGE }}:test" /bin/sh -c true 2>/dev/null; then
+            echo "FAIL: shell reachable via image — ENTRYPOINT lockdown not enforced"
+            exit 1
+          fi
+          echo "OK: shell not reachable, ENTRYPOINT lockdown enforced"
+
       - name: Docker Hub login
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" \
@@ -97,6 +134,10 @@ jobs:
           TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
           docker tag "${{ env.IMAGE }}:test" "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
           docker push "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}"
+          # Trivy runs in the dedicated `security` job below — non-blocking,
+          # findings are surfaced as a PR comment (or step summary on push).
+          # This keeps build-test focused on build + smoke tests and lets a
+          # human triage CVEs per case rather than the build hard-failing.
 
   # ---------------------------------------------------------------------------
   security:
@@ -124,19 +165,71 @@ jobs:
             "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}" \
             > /tmp/trivy-report.json
 
+      - name: Render Trivy report (Markdown)
+        env:
+          SCANNED_IMAGE: "tcwlab/forgejo-build:betterlint-${{ github.sha }}"
+          TRIVY_IMAGE: "tcwlab/trivy:0.70.0"
+        run: |
+          # Always render the Markdown body to /tmp/trivy-report.md so the
+          # follow-up steps (PR comment, $GITHUB_STEP_SUMMARY) can consume
+          # it without re-parsing the JSON.
+          python3 << 'EOF'
+          import os, json
+          from datetime import datetime, timezone
+
+          with open("/tmp/trivy-report.json") as f:
+              report = json.load(f)
+
+          icon = {"CRITICAL": "\U0001f534", "HIGH": "\U0001f7e0"}
+          rows = []
+          for result in report.get("Results", []):
+              for v in result.get("Vulnerabilities") or []:
+                  sev   = v.get("Severity", "")
+                  pkg   = v.get("PkgName", "")
+                  inst  = v.get("InstalledVersion", "")
+                  fixed = v.get("FixedVersion", "") or "—"
+                  cve   = v.get("VulnerabilityID", "")
+                  url   = next(
+                      (r for r in v.get("References", []) if "nvd.nist.gov" in r),
+                      v.get("PrimaryURL", ""))
+                  cve_link = f"[{cve}]({url})" if url else cve
+                  rows.append((sev, icon.get(sev, "⚪"), pkg, inst, fixed, cve_link))
+
+          rows.sort(key=lambda r: ({"CRITICAL": 0, "HIGH": 1}.get(r[0], 9), r[2]))
+          counts = {s: sum(1 for r in rows if r[0] == s) for s in ["CRITICAL", "HIGH"]}
+          total  = sum(counts.values())
+
+          if total == 0:
+              body = "**✅ Security scan — no HIGH/CRITICAL vulnerabilities**"
+          else:
+              parts = [f"{counts[s]} {s}" for s in ["CRITICAL", "HIGH"] if counts[s]]
+              body  = f"**⚠️ Security scan — {', '.join(parts)}** (fixable vulnerabilities only — non-blocking, triage manually)\n\n"
+              body += "| Severity | Package | Installed | Fixed | CVE |\n"
+              body += "| --- | --- | --- | --- | --- |\n"
+              for _, ico, pkg, inst, fixed, cve_link in rows:
+                  body += f"| {ico} | `{pkg}` | {inst} | {fixed} | {cve_link} |\n"
+
+          scan_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+          footer = (
+              f"_Scanned: `{os.environ['SCANNED_IMAGE']}` "
+              f"· Tool: `{os.environ['TRIVY_IMAGE']}` "
+              f"· {scan_date}_"
+          )
+          with open("/tmp/trivy-report.md", "w") as f:
+              f.write(f"{body}\n\n{footer}\n")
+          EOF
+
       - name: Post Trivy result as PR comment
+        if: github.event_name == 'pull_request'
         env:
           FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
           REPO: ${{ github.repository }}
-          SCANNED_IMAGE: "tcwlab/forgejo-build:betterlint-${{ github.sha }}"
-          TRIVY_IMAGE: "tcwlab/trivy:0.70.0"
         run: |
           python3 << 'EOF'
-          import os, json, re, urllib.request, urllib.error
-          from datetime import datetime, timezone
+          import os, json, urllib.request, urllib.error
 
           MARKER  = "<!-- trivy-report -->"
           token   = os.environ["FORGEJO_TOKEN"]
@@ -180,46 +273,8 @@ jobs:
               print("No open PR — comment will not be posted")
               raise SystemExit(0)
 
-          # Build the report
-          with open("/tmp/trivy-report.json") as f:
-              report = json.load(f)
-
-          icon = {"CRITICAL": "\U0001f534", "HIGH": "\U0001f7e0"}
-          rows = []
-          for result in report.get("Results", []):
-              for v in result.get("Vulnerabilities") or []:
-                  sev   = v.get("Severity", "")
-                  pkg   = v.get("PkgName", "")
-                  inst  = v.get("InstalledVersion", "")
-                  fixed = v.get("FixedVersion", "") or "—"
-                  cve   = v.get("VulnerabilityID", "")
-                  url   = next(
-                      (r for r in v.get("References", []) if "nvd.nist.gov" in r),
-                      v.get("PrimaryURL", ""))
-                  cve_link = f"[{cve}]({url})" if url else cve
-                  rows.append((sev, icon.get(sev, "⚪"), pkg, inst, fixed, cve_link))
-
-          rows.sort(key=lambda r: ({"CRITICAL": 0, "HIGH": 1}.get(r[0], 9), r[2]))
-          counts = {s: sum(1 for r in rows if r[0] == s) for s in ["CRITICAL", "HIGH"]}
-          total  = sum(counts.values())
-
-          if total == 0:
-              body = "**✅ Security scan — no HIGH/CRITICAL vulnerabilities**"
-          else:
-              parts = [f"{counts[s]} {s}" for s in ["CRITICAL", "HIGH"] if counts[s]]
-              body  = f"**⚠️ Security scan — {', '.join(parts)}** (fixable vulnerabilities only)\n\n"
-              body += "| Severity | Package | Installed | Fixed | CVE |\n"
-              body += "| --- | --- | --- | --- | --- |\n"
-              for _, ico, pkg, inst, fixed, cve_link in rows:
-                  body += f"| {ico} | `{pkg}` | {inst} | {fixed} | {cve_link} |\n"
-
-          scan_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-          comment   = (
-              f"{MARKER}\n{body}\n\n"
-              f"_Scanned: `{os.environ['SCANNED_IMAGE']}` "
-              f"· Tool: `{os.environ['TRIVY_IMAGE']}` "
-              f"· {scan_date}_"
-          )
+          with open("/tmp/trivy-report.md") as f:
+              comment = f"{MARKER}\n{f.read()}"
 
           # Look for an existing comment (paginated, max 200)
           existing_id = None
@@ -243,6 +298,20 @@ jobs:
               status = post(f"{api}/repos/{repo}/issues/{pr_number}/comments", {"body": comment})
               print(f"PR #{pr_number}: Trivy comment created (HTTP {status})")
           EOF
+
+      - name: Trivy report — job summary (non-PR events)
+        if: github.event_name != 'pull_request'
+        run: |
+          if [ -s /tmp/trivy-report.md ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "## Trivy security scan"
+              echo
+              cat /tmp/trivy-report.md
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Trivy report written to job summary"
+          else
+            echo "No /tmp/trivy-report.md or \$GITHUB_STEP_SUMMARY unset — nothing to do"
+          fi
 
   # ---------------------------------------------------------------------------
   betterlint-check:
