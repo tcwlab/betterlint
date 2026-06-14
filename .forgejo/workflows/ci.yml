@@ -141,6 +141,11 @@ jobs:
             -o /tmp/docker.tgz
           tar xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin docker/docker
       - name: Trivy scan (JSON)
+        # Always continue — a Trivy crash (DB download fail, registry auth
+        # glitch, etc.) should still let the PR-comment step surface the
+        # error in-PR. The render step + comment step both handle a
+        # missing/bad JSON file gracefully.
+        continue-on-error: true
         run: |
           TOOL=$(echo "${{ env.IMAGE }}" | cut -d'/' -f2)
           docker run --rm \
@@ -150,21 +155,59 @@ jobs:
             --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed \
             --format json \
             "tcwlab/forgejo-build:${TOOL}-${{ github.sha }}" \
-            > /tmp/trivy-report.json
+            > /tmp/trivy-report.json \
+            2> /tmp/trivy-stderr.log \
+            || echo "(trivy invocation exited non-zero — captured below)"
+          echo "--- trivy stderr ---"
+          cat /tmp/trivy-stderr.log || true
       - name: Render Trivy report (Markdown)
+        if: always()
         env:
           SCANNED_IMAGE: "tcwlab/forgejo-build:betterlint-${{ github.sha }}"
           TRIVY_IMAGE: "tcwlab/trivy:0.70.0"
         run: |
           # Always render the Markdown body to /tmp/trivy-report.md so the
           # follow-up steps (PR comment, $GITHUB_STEP_SUMMARY) can consume
-          # it without re-parsing the JSON.
+          # it without re-parsing the JSON. Gracefully falls back to a
+          # "scan failed" body when the JSON is missing or unparseable.
           python3 << 'EOF'
           import os, json
           from datetime import datetime, timezone
 
-          with open("/tmp/trivy-report.json") as f:
-              report = json.load(f)
+          report = None
+          fail_reason = None
+          try:
+              with open("/tmp/trivy-report.json") as f:
+                  text = f.read().strip()
+              if not text:
+                  fail_reason = "Trivy produced an empty report"
+              else:
+                  report = json.loads(text)
+          except FileNotFoundError:
+              fail_reason = "Trivy did not produce `/tmp/trivy-report.json` (scan step crashed before writing output)"
+          except json.JSONDecodeError as e:
+              fail_reason = f"Trivy output is not valid JSON: {e}"
+
+          if fail_reason:
+              stderr_tail = ""
+              try:
+                  with open("/tmp/trivy-stderr.log") as f:
+                      stderr_tail = f.read().strip()[-3000:]
+              except FileNotFoundError:
+                  pass
+              scan_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+              body = f"**❌ Security scan — Trivy failed to run**\n\n{fail_reason}"
+              if stderr_tail:
+                  body += "\n\n<details><summary>trivy stderr (tail)</summary>\n\n```\n" + stderr_tail + "\n```\n\n</details>"
+              footer = (
+                  f"_Scanned: `{os.environ['SCANNED_IMAGE']}` "
+                  f"· Tool: `{os.environ['TRIVY_IMAGE']}` "
+                  f"· {scan_date}_"
+              )
+              with open("/tmp/trivy-report.md", "w") as f:
+                  f.write(f"{body}\n\n{footer}\n")
+              raise SystemExit(0)
+
 
           icon = {"CRITICAL": "\U0001f534", "HIGH": "\U0001f7e0"}
           rows = []
@@ -205,7 +248,9 @@ jobs:
               f.write(f"{body}\n\n{footer}\n")
           EOF
       - name: Post Trivy result as PR comment
-        if: github.event_name == 'pull_request'
+        # Always post — even when the scan crashed — so failure modes
+        # surface in the PR thread instead of just turning the job red.
+        if: always() && github.event_name == 'pull_request'
         env:
           FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
@@ -284,7 +329,7 @@ jobs:
               print(f"PR #{pr_number}: Trivy comment created (HTTP {status})")
           EOF
       - name: Trivy report — job summary (non-PR events)
-        if: github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request'
         run: |
           if [ -s /tmp/trivy-report.md ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             {
