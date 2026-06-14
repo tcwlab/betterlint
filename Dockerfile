@@ -160,7 +160,9 @@ RUN chmod +x /usr/local/bin/betterlint
 # distro-typical service accounts stop around 999) and below the OpenShift
 # arbitrary-uid range — no collisions with host system accounts.
 RUN addgroup -S -g 10001 betterlint \
- && adduser  -S -D -H -u 10001 -G betterlint betterlint
+ && adduser  -S -D -h /home/betterlint -u 10001 -G betterlint betterlint \
+ && mkdir -p /home/betterlint \
+ && chown 10001:10001 /home/betterlint
 
 # Smoke test: every tool, the wrapper, and all default configs must be present
 ENV BETTERLINT_VERSION=${BETTERLINT_VERSION}
